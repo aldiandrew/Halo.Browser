@@ -27,6 +27,7 @@ jobs:
           JADX_BIN="$(find "$RUNNER_TEMP/jadx" -type f -path "*/bin/jadx" -print -quit)"
           test -n "$JADX_BIN"
           chmod +x "$JADX_BIN"
+echo "JADX_BIN=$JADX_BIN" >> "$GITHUB_ENV"
 
       - name: Decompile reference
         shell: bash
