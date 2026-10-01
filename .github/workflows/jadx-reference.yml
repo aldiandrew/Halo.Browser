@@ -1,0 +1,87 @@
+name: Analyze reference APK with JADX
+
+on:
+  push:
+    paths:
+      - ".github/workflows/jadx-reference.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  jadx:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install JADX
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/jadx"
+          release_json="$RUNNER_TEMP/jadx/release.json"
+          curl -fsSL https://api.github.com/repos/skylot/jadx/releases/latest -o "$release_json"
+          url="$(jq -r '.assets[] | select(.name | endswith(".zip")) | .browser_download_url' "$release_json" | head -n1)"
+          test -n "$url"
+          curl -fL "$url" -o "$RUNNER_TEMP/jadx/jadx.zip"
+          unzip -q "$RUNNER_TEMP/jadx/jadx.zip" -d "$RUNNER_TEMP/jadx"
+          test -x "$RUNNER_TEMP/jadx/jadx/bin/jadx"
+
+      - name: Decompile APK and extract behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          apk="$(find ss -maxdepth 1 -type f -name 'Bubble_ Fast Floating Browser 1.9.apk+' -print -quit)"
+          test -n "$apk"
+
+          rm -rf "$RUNNER_TEMP/decompiled" reference-analysis
+          mkdir -p reference-analysis
+
+          "$RUNNER_TEMP/jadx/jadx/bin/jadx"             --deobf             --deobf-use-sourcename             --show-bad-code             --threads-count 2             -d "$RUNNER_TEMP/decompiled"             "$apk" > reference-analysis/jadx-console.txt 2>&1 || true
+
+          echo "=== APK FILE ===" > reference-analysis/apk-info.txt
+          stat "$apk" >> reference-analysis/apk-info.txt
+          sha256sum "$apk" >> reference-analysis/apk-info.txt
+
+          echo "=== SOURCE FILE INDEX ===" > reference-analysis/source-index.txt
+          find "$RUNNER_TEMP/decompiled/sources" -type f \( -name '*.java' -o -name '*.kt' \) | sort >> reference-analysis/source-index.txt || true
+
+          echo "=== TARGETED CLASS INDEX ===" > reference-analysis/targeted-class-index.txt
+          rg -l -i             'WindowManager|TYPE_APPLICATION_OVERLAY|SYSTEM_ALERT_WINDOW|AccessibilityService|MotionEvent|GestureDetector|VelocityTracker|snap|dock|edge|drag|close|resize|minimi|expand|bubble|floating|chat.?head|WebView|ForegroundService|startForeground|Notification|service'             "$RUNNER_TEMP/decompiled/sources"             | sort >> reference-analysis/targeted-class-index.txt || true
+
+          echo "=== MANIFEST ===" > reference-analysis/AndroidManifest.xml.txt
+          cat "$RUNNER_TEMP/decompiled/resources/AndroidManifest.xml" >> reference-analysis/AndroidManifest.xml.txt || true
+
+          echo "=== TARGETED SOURCE CONTENT ===" > reference-analysis/targeted-source.txt
+          while IFS= read -r file; do
+            echo >> reference-analysis/targeted-source.txt
+            echo "================================================================" >> reference-analysis/targeted-source.txt
+            echo "FILE: $file" >> reference-analysis/targeted-source.txt
+            echo "================================================================" >> reference-analysis/targeted-source.txt
+            cat "$file" >> reference-analysis/targeted-source.txt
+          done < reference-analysis/targeted-class-index.txt
+
+          echo "=== RELEVANT RESOURCE STRINGS ===" > reference-analysis/relevant-resources.txt
+          rg -n -i             'bubble|floating|browser|chat.?head|minimi|expand|close|drag|move|resize|tab|new tab|settings|home|back|forward|refresh|download|incognito|desktop|mobile|share'             "$RUNNER_TEMP/decompiled/resources/values"             >> reference-analysis/relevant-resources.txt || true
+
+          echo "=== WINDOW / TOUCH / SERVICE SYMBOLS ===" > reference-analysis/symbol-hits.txt
+          rg -n -i             'WindowManager\\.LayoutParams|TYPE_APPLICATION_OVERLAY|TYPE_PHONE|TYPE_SYSTEM_ALERT|FLAG_NOT_FOCUSABLE|FLAG_NOT_TOUCH_MODAL|FLAG_LAYOUT_IN_SCREEN|FLAG_ALT_FOCUSABLE_IM|onTouchEvent|setOnTouchListener|ACTION_DOWN|ACTION_MOVE|ACTION_UP|ACTION_CANCEL|VelocityTracker|GestureDetector|OVERLAY|BUBBLE|FLOAT|SERVICE|NOTIFICATION'             "$RUNNER_TEMP/decompiled/sources"             >> reference-analysis/symbol-hits.txt || true
+
+      - name: Commit analysis report
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add reference-analysis
+          if git diff --cached --quiet; then
+            echo "No report changes."
+            exit 0
+          fi
+
+          git commit -m "Analyze reference APK with JADX"
+          git push
