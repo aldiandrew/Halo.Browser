@@ -13,6 +13,9 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
+import android.animation.ValueAnimator
+import android.view.VelocityTracker
+import android.view.animation.DecelerateInterpolator
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
@@ -23,7 +26,6 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
-import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
@@ -33,6 +35,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.max
 
 class FloatingBubbleService : Service() {
@@ -51,6 +54,9 @@ class FloatingBubbleService : Service() {
     private var addressField: EditText? = null
     private var titleView: TextView? = null
     private var activeWebView: WebView? = null
+
+    private val bubbleAnimators =
+        mutableMapOf<Int, ValueAnimator>()
 
     private val binder = LocalBinder()
 
@@ -195,6 +201,7 @@ class FloatingBubbleService : Service() {
     fun closeTab(id: Int) {
         if (id == MANAGER_ID) return
 
+        bubbleAnimators.remove(id)?.cancel()
         val bubble = bubbles.remove(id) ?: return
 
         if (activeId == id) {
@@ -202,6 +209,8 @@ class FloatingBubbleService : Service() {
             expanded = false
         }
 
+        bubble.savedX = bubble.params?.x
+        bubble.savedY = bubble.params?.y
         bubble.webView?.stopLoading()
         bubble.webView?.destroy()
 
@@ -271,17 +280,36 @@ class FloatingBubbleService : Service() {
                         NEW_TAB_URL
                     ) ?: NEW_TAB_URL
 
+                val savedX =
+                    prefs.getInt(
+                        "x_" + id,
+                        Int.MIN_VALUE
+                    )
+
+                val savedY =
+                    prefs.getInt(
+                        "y_" + id,
+                        Int.MIN_VALUE
+                    )
+
                 bubbles[id] =
                     BubbleState(
                         id = id,
                         url = url,
-                        kind = BubbleKind.TAB
+                        kind = BubbleKind.TAB,
+                        savedX = savedX.takeUnless {
+                            it == Int.MIN_VALUE
+                        },
+                        savedY = savedY.takeUnless {
+                            it == Int.MIN_VALUE
+                        }
                     )
 
-                nextId = max(
-                    nextId,
-                    id + 1
-                )
+                nextId =
+                    max(
+                        nextId,
+                        id + 1
+                    )
             }
     }
 
@@ -311,11 +339,22 @@ class FloatingBubbleService : Service() {
             .filter {
                 it.kind == BubbleKind.TAB
             }
-            .forEach {
+            .forEach { bubble ->
                 editor.putString(
-                    "url_" + it.id,
-                    it.url
+                    "url_" + bubble.id,
+                    bubble.url
                 )
+
+                bubble.params?.let { params ->
+                    editor.putInt(
+                        "x_" + bubble.id,
+                        params.x
+                    )
+                    editor.putInt(
+                        "y_" + bubble.id,
+                        params.y
+                    )
+                }
             }
 
         editor.apply()
@@ -328,7 +367,7 @@ class FloatingBubbleService : Service() {
             return
         }
 
-        val size = dp(64)
+        val size = dp(56)
 
         val root =
             FrameLayout(this).apply {
@@ -337,27 +376,21 @@ class FloatingBubbleService : Service() {
 
                 background =
                     GradientDrawable().apply {
-                        shape =
-                            GradientDrawable.OVAL
-                        setColor(
-                            0xFFF1EFFF.toInt()
-                        )
+                        shape = GradientDrawable.OVAL
+                        setColor(0xFFF7F2FA.toInt())
                         setStroke(
                             dp(2),
-                            0xFF6650A4.toInt()
+                            0xFF6750A4.toInt()
                         )
                     }
 
-                elevation = dp(8).toFloat()
+                elevation = dp(10).toFloat()
             }
 
         val icon =
             TextView(this).apply {
-                text = "●"
-                textSize = 25f
-                setTextColor(
-                    0xFF6650A4.toInt()
-                )
+                text = "🌐"
+                textSize = 20f
                 gravity = Gravity.CENTER
             }
 
@@ -370,7 +403,6 @@ class FloatingBubbleService : Service() {
         )
 
         bubble.view = root
-
         bubble.params =
             overlayParams(
                 size,
@@ -379,6 +411,14 @@ class FloatingBubbleService : Service() {
             ).apply {
                 gravity =
                     Gravity.TOP or Gravity.START
+
+                x =
+                    bubble.savedX
+                        ?: dp(8)
+
+                y =
+                    bubble.savedY
+                        ?: dp(180)
             }
 
         root.setOnTouchListener(
@@ -403,54 +443,126 @@ class FloatingBubbleService : Service() {
         var startX = 0
         var startY = 0
         var moved = false
+        var captured = false
+        var velocityTracker: VelocityTracker? = null
 
         return View.OnTouchListener { _, event ->
+            val tracker =
+                velocityTracker
+                    ?: VelocityTracker.obtain().also {
+                        velocityTracker = it
+                    }
+
+            tracker.addMovement(event)
+
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    bubbleAnimators
+                        .remove(bubble.id)
+                        ?.cancel()
+
                     startRawX = event.rawX
                     startRawY = event.rawY
                     startX =
                         bubble.params?.x ?: 0
                     startY =
                         bubble.params?.y ?: 0
+
                     moved = false
+                    captured = false
+
+                    bubble.view?.animate()
+                        ?.scaleX(0.90f)
+                        ?.scaleY(0.90f)
+                        ?.setDuration(80)
+                        ?.start()
+
                     showCloseTarget()
                     true
                 }
 
                 MotionEvent.ACTION_MOVE -> {
                     val dx =
-                        (event.rawX - startRawX)
-                            .toInt()
+                        (event.rawX - startRawX).toInt()
                     val dy =
-                        (event.rawY - startRawY)
-                            .toInt()
+                        (event.rawY - startRawY).toInt()
 
                     if (
-                        abs(dx) > dp(6) ||
-                        abs(dy) > dp(6)
+                        abs(dx) > dp(5) ||
+                        abs(dy) > dp(5)
                     ) {
                         moved = true
                     }
 
-                    bubble.params?.let { params ->
-                        params.x =
-                            startX + dx
-                        params.y =
-                            startY + dy
+                    if (!moved) {
+                        return@OnTouchListener true
+                    }
 
-                        clamp(
-                            params,
-                            size
-                        )
+                    val params =
+                        bubble.params
+                            ?: return@OnTouchListener true
 
-                        try {
-                            wm.updateViewLayout(
-                                bubble.view!!,
-                                params
-                            )
-                        } catch (_: Exception) {
+                    params.x = startX + dx
+                    params.y = startY + dy
+
+                    clamp(
+                        params,
+                        size
+                    )
+
+                    val closeCenter =
+                        closeTargetCenter()
+
+                    captured =
+                        closeCenter?.let { center ->
+                            hypot(
+                                event.rawX - center.first,
+                                event.rawY - center.second
+                            ) < dp(110)
+                        } == true
+
+                    if (captured) {
+                        closeTarget?.animate()
+                            ?.scaleX(1.08f)
+                            ?.scaleY(1.08f)
+                            ?.setDuration(80)
+                            ?.start()
+
+                        closeCenter?.let { center ->
+                            val tx =
+                                (
+                                    center.first -
+                                        size / 2f
+                                ).toInt()
+
+                            val ty =
+                                (
+                                    center.second -
+                                        size / 2f
+                                ).toInt()
+
+                            params.x =
+                                lerpInt(
+                                    params.x,
+                                    tx,
+                                    0.32f
+                                )
+
+                            params.y =
+                                lerpInt(
+                                    params.y,
+                                    ty,
+                                    0.32f
+                                )
                         }
+                    }
+
+                    try {
+                        wm.updateViewLayout(
+                            bubble.view!!,
+                            params
+                        )
+                    } catch (_: Exception) {
                     }
 
                     true
@@ -458,33 +570,39 @@ class FloatingBubbleService : Service() {
 
                 MotionEvent.ACTION_UP,
                 MotionEvent.ACTION_CANCEL -> {
-                    val overClose =
-                        isOverCloseTarget(
-                            event.rawX,
-                            event.rawY
-                        )
+                    tracker.computeCurrentVelocity(1000)
+
+                    val vx =
+                        tracker.xVelocity
+
+                    val vy =
+                        tracker.yVelocity
+
+                    tracker.recycle()
+                    velocityTracker = null
 
                     hideCloseTarget()
 
+                    bubble.view?.animate()
+                        ?.scaleX(1f)
+                        ?.scaleY(1f)
+                        ?.setDuration(120)
+                        ?.start()
+
                     when {
-                        !moved -> {
-                            openBubble(
-                                bubble.id
-                            )
-                        }
+                        moved && captured ->
+                            closeTab(bubble.id)
 
-                        overClose -> {
-                            closeTab(
-                                bubble.id
-                            )
-                        }
-
-                        else -> {
-                            snapSingle(
+                        moved ->
+                            settleBubble(
                                 bubble,
-                                size
+                                size,
+                                vx,
+                                vy
                             )
-                        }
+
+                        else ->
+                            openBubble(bubble.id)
                     }
 
                     true
@@ -493,6 +611,267 @@ class FloatingBubbleService : Service() {
                 else -> true
             }
         }
+    }
+
+    private fun settleBubble(
+        bubble: BubbleState,
+        size: Int,
+        velocityX: Float,
+        velocityY: Float
+    ) {
+        val params =
+            bubble.params
+                ?: return
+
+        val maxX =
+            max(
+                0,
+                screenWidth() - size
+            )
+
+        val targetX =
+            if (abs(velocityX) >= dp(50)) {
+                if (velocityX > 0f) {
+                    maxX - dp(6)
+                } else {
+                    dp(6)
+                }
+            } else {
+                if (
+                    params.x + size / 2 <
+                    screenWidth() / 2
+                ) {
+                    dp(6)
+                } else {
+                    maxX - dp(6)
+                }
+            }.coerceIn(
+                0,
+                maxX
+            )
+
+        val targetY =
+            (
+                params.y +
+                    velocityY * 0.06f
+            ).toInt().coerceIn(
+                dp(8),
+                screenHeight() -
+                    size -
+                    dp(8)
+            )
+
+        val startX = params.x
+        val startY = params.y
+
+        val distance =
+            hypot(
+                (targetX - startX).toFloat(),
+                (targetY - startY).toFloat()
+            )
+
+        val speed =
+            max(
+                220f,
+                hypot(
+                    velocityX,
+                    velocityY
+                )
+            )
+
+        val duration =
+            (
+                170L +
+                    distance / speed * 280L
+            )
+                .toLong()
+                .coerceIn(
+                    170L,
+                    460L
+                )
+
+        bubbleAnimators
+            .remove(bubble.id)
+            ?.cancel()
+
+        val animator =
+            ValueAnimator.ofFloat(
+                0f,
+                1f
+            ).apply {
+                this.duration = duration
+                interpolator =
+                    DecelerateInterpolator(1.7f)
+
+                addUpdateListener { animation ->
+                    val paramsNow =
+                        bubble.params
+                            ?: return@addUpdateListener
+
+                    val fraction =
+                        animation.animatedFraction
+
+                    paramsNow.x =
+                        lerpInt(
+                            startX,
+                            targetX,
+                            fraction
+                        )
+
+                    paramsNow.y =
+                        lerpInt(
+                            startY,
+                            targetY,
+                            fraction
+                        )
+
+                    try {
+                        wm.updateViewLayout(
+                            bubble.view!!,
+                            paramsNow
+                        )
+                    } catch (_: Exception) {
+                    }
+                }
+
+                addListener(
+                    object :
+                        android.animation.AnimatorListenerAdapter() {
+                        override fun onAnimationEnd(
+                            animation:
+                                android.animation.Animator
+                        ) {
+                            bubble.savedX =
+                                bubble.params?.x
+
+                            bubble.savedY =
+                                bubble.params?.y
+
+                            persistTabs()
+                            arrangeBubbleStack(bubble)
+                            bubbleAnimators.remove(
+                                bubble.id
+                            )
+                        }
+
+                        override fun onAnimationCancel(
+                            animation:
+                                android.animation.Animator
+                        ) {
+                            bubbleAnimators.remove(
+                                bubble.id
+                            )
+                        }
+                    }
+                )
+            }
+
+        bubbleAnimators[bubble.id] =
+            animator
+
+        animator.start()
+    }
+
+    private fun arrangeBubbleStack(
+        hero: BubbleState
+    ) {
+        val size = dp(56)
+        val gap = dp(8)
+        val heroParams =
+            hero.params ?: return
+
+        val isLeft =
+            heroParams.x <
+                screenWidth() / 2
+
+        bubbles.values
+            .filter {
+                it.kind == BubbleKind.TAB &&
+                    it.id != hero.id
+            }
+            .forEachIndexed { index, bubble ->
+                val params =
+                    bubble.params
+                        ?: return@forEachIndexed
+
+                val offset =
+                    minOf(
+                        dp(12) +
+                            index *
+                            dp(12),
+                        dp(72)
+                    )
+
+                params.x =
+                    if (isLeft) {
+                        (
+                            heroParams.x +
+                                offset
+                        ).coerceIn(
+                            0,
+                            screenWidth() - size
+                        )
+                    } else {
+                        (
+                            heroParams.x -
+                                offset
+                        ).coerceIn(
+                            0,
+                            screenWidth() - size
+                        )
+                    }
+
+                params.y =
+                    (
+                        heroParams.y +
+                            index *
+                            dp(3)
+                    ).coerceIn(
+                        dp(8),
+                        screenHeight() -
+                            size -
+                            dp(8)
+                    )
+
+                try {
+                    wm.updateViewLayout(
+                        bubble.view!!,
+                        params
+                    )
+                } catch (_: Exception) {
+                }
+            }
+
+        persistTabs()
+    }
+
+    private fun lerpInt(
+        start: Int,
+        end: Int,
+        fraction: Float
+    ): Int =
+        (
+            start +
+                (end - start) *
+                fraction
+        ).toInt()
+
+    private fun closeTargetCenter():
+        Pair<Float, Float>? {
+        val target =
+            closeTarget ?: return null
+
+        val location =
+            IntArray(2)
+
+        target.getLocationOnScreen(location)
+
+        return Pair(
+            location[0] +
+                target.width / 2f,
+            location[1] +
+                target.height / 2f
+        )
     }
 
     private fun showBrowserWindow(
@@ -1162,53 +1541,15 @@ class FloatingBubbleService : Service() {
             return
         }
 
-        val size = dp(64)
-        val gap = dp(10)
+        val hero =
+            tabs.firstOrNull {
+                it.id == activeId
+            } ?: tabs.first()
 
-        tabs.forEachIndexed { index, bubble ->
-            val x =
-                if (
-                    index % 2 == 0
-                ) {
-                    screenWidth() -
-                        size -
-                        dp(10)
-                } else {
-                    dp(10)
-                }
-
-            val y =
-                dp(150) +
-                    (index / 2) *
-                    (size + gap)
-
-            animateBubbleTo(
-                bubble,
-                x,
-                y
-            )
-        }
-    }
-
-    private fun animateBubbleTo(
-        bubble: BubbleState,
-        x: Int,
-        y: Int
-    ) {
-        val params =
-            bubble.params
-                ?: return
-
-        params.x = x
-        params.y = y
-
-        try {
-            wm.updateViewLayout(
-                bubble.view!!,
-                params
-            )
-        } catch (_: Exception) {
-        }
+        snapSingle(
+            hero,
+            dp(56)
+        )
     }
 
     private fun snapSingle(
@@ -1216,13 +1557,11 @@ class FloatingBubbleService : Service() {
         size: Int
     ) {
         val params =
-            bubble.params
-                ?: return
+            bubble.params ?: return
 
-        params.x =
+        val targetX =
             if (
-                params.x +
-                    size / 2 <
+                params.x + size / 2 <
                 screenWidth() / 2
             ) {
                 dp(6)
@@ -1232,18 +1571,12 @@ class FloatingBubbleService : Service() {
                     dp(6)
             }
 
-        clamp(
-            params,
-            size
+        settleBubble(
+            bubble,
+            size,
+            (targetX - params.x).toFloat(),
+            0f
         )
-
-        try {
-            wm.updateViewLayout(
-                bubble.view!!,
-                params
-            )
-        } catch (_: Exception) {
-        }
     }
 
     private fun showCloseTarget() {
@@ -1251,22 +1584,37 @@ class FloatingBubbleService : Service() {
             return
         }
 
-        val size = dp(72)
+        val size = dp(62)
 
         val target =
             FrameLayout(this).apply {
                 background =
                     GradientDrawable().apply {
-                        shape =
-                            GradientDrawable.OVAL
-                        setColor(
-                            0xFF3A3540.toInt()
-                        )
+                        shape = GradientDrawable.OVAL
+                        setColor(0xFF2B2930.toInt())
                         setStroke(
                             dp(2),
-                            0xFFFFFFFF.toInt()
+                            Color.WHITE
                         )
                     }
+
+                val label =
+                    TextView(
+                        this@FloatingBubbleService
+                    ).apply {
+                        text = "×"
+                        textSize = 28f
+                        gravity = Gravity.CENTER
+                        setTextColor(Color.WHITE)
+                    }
+
+                addView(
+                    label,
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
+                )
             }
 
         val params =
@@ -1278,7 +1626,7 @@ class FloatingBubbleService : Service() {
                 gravity =
                     Gravity.BOTTOM or
                         Gravity.CENTER_HORIZONTAL
-                y = dp(28)
+                y = dp(40)
             }
 
         closeTarget = target
@@ -1555,7 +1903,9 @@ class FloatingBubbleService : Service() {
         var view: View? = null,
         var params:
             WindowManager.LayoutParams? = null,
-        var webView: WebView? = null
+        var webView: WebView? = null,
+        var savedX: Int? = null,
+        var savedY: Int? = null
     )
 
     private enum class BubbleKind {
