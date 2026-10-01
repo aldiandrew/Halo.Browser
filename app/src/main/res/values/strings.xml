@@ -1,7 +1,0 @@
-<resources>
-    <string name="app_name">Halo Browser</string>
-    <string name="bubble_channel_name">Halo Browser</string>
-    <string name="bubble_title">Halo Browser</string>
-    <string name="bubble_text">Tap to open Halo Browser</string>
-    <string name="shortcut_label">Halo Browser</string>
-</resources>
