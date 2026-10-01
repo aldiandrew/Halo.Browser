@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.aldiandrew.halobrowser"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.aldiandrew.halobrowser"
