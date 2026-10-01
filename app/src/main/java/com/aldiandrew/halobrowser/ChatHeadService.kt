@@ -60,6 +60,12 @@ class ChatHeadService : Service() {
 
     private var closeTarget: View? = null
     private var dragging: Head? = null
+    private var heroId: String? = null
+
+    private enum class HeadState {
+        FREE,
+        CAPTURED
+    }
 
     inner class LocalBinder : android.os.Binder() {
         fun service(): ChatHeadService = this@ChatHeadService
@@ -98,6 +104,15 @@ class ChatHeadService : Service() {
     }
 
     fun addTab(url: String, open: Boolean): String {
+        if (tabs.size >= MAX_TABS) {
+            val existing = activeId?.let { tabs[it] } ?: tabs.values.firstOrNull()
+            existing?.let {
+                heroId = it.tab.id
+                if (open) openBubble(it.tab.id)
+                return it.tab.id
+            }
+        }
+
         val id = "browser_tab_" + System.currentTimeMillis() + "_" + (1000..9999).random()
         val tab = BrowserTab(id, normalizeUrl(url))
         tab.x = if (tabs.size % 2 == 0) dp(4) else screenWidth() - bubbleSize() - dp(4)
@@ -118,6 +133,7 @@ class ChatHeadService : Service() {
         }
         val head = tabs[id] ?: return
         activeId = id
+        heroId = id
         head.view?.visibility = View.INVISIBLE
         closeExpanded(false)
         openTabWindow(head)
@@ -231,6 +247,7 @@ class ChatHeadService : Service() {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     dragging = head
+                    head.state = HeadState.CAPTURED
                     downX = event.rawX
                     downY = event.rawY
                     startX = p.x
@@ -251,6 +268,13 @@ class ChatHeadService : Service() {
                     p.x = startX + dx.toInt()
                     p.y = startY + dy.toInt()
                     clamp(p)
+                    if (isNearCloseTarget(event.rawX, event.rawY)) {
+                        view.scaleX = 0.72f
+                        view.scaleY = 0.72f
+                    } else {
+                        view.scaleX = 0.84f
+                        view.scaleY = 0.84f
+                    }
                     wm.updateViewLayout(view, p)
                     head.tab.x = p.x
                     head.tab.y = p.y
@@ -268,13 +292,17 @@ class ChatHeadService : Service() {
 
                     if (isOverCloseTarget(event.rawX, event.rawY)) {
                         if (!head.manager) closeTab(head.tab.id)
+                        head.state = HeadState.FREE
                         dragging = null
                         return@OnTouchListener true
                     }
 
                     if (!moved) {
+                        head.state = HeadState.FREE
                         if (head.manager) openManager() else openBubble(head.tab.id)
                     } else {
+                        head.state = HeadState.FREE
+                        heroId = head.tab.id
                         settle(head, vx, vy)
                     }
                     dragging = null
@@ -299,8 +327,10 @@ class ChatHeadService : Service() {
 
     private fun arrange() {
         val list = tabs.values.filter { it !== dragging }
-        val left = list.filter { it.tab.x + bubbleSize() / 2 < screenWidth() / 2 }.sortedBy { it.tab.y }
-        val right = list.filter { it.tab.x + bubbleSize() / 2 >= screenWidth() / 2 }.sortedBy { it.tab.y }
+        val left = list.filter { it.tab.x + bubbleSize() / 2 < screenWidth() / 2 }
+            .sortedWith(compareBy<Head> { if (it.tab.id == heroId) 0 else 1 }.thenBy { it.tab.y })
+        val right = list.filter { it.tab.x + bubbleSize() / 2 >= screenWidth() / 2 }
+            .sortedWith(compareBy<Head> { if (it.tab.id == heroId) 0 else 1 }.thenBy { it.tab.y })
 
         arrangeSide(left, false)
         arrangeSide(right, true)
@@ -313,17 +343,27 @@ class ChatHeadService : Service() {
     }
 
     private fun arrangeSide(list: List<Head>, right: Boolean) {
+        var previousY = dp(84)
         list.forEachIndexed { index, head ->
             val x = if (right) screenWidth() - bubbleSize() - dp(4) else dp(4)
-            val y = min(dp(84) + index * dp(62), screenHeight() - bubbleSize() - dp(8))
-            springTo(head, x, y, 0f, 0f)
+            val y = min(previousY + if (index == 0) 0 else dp(62), screenHeight() - bubbleSize() - dp(8))
+            val chainDamping = if (index == 0) 0.78f else 0.86f
+            springTo(head, x, y, 0f, 0f, chainDamping)
             head.tab.x = x
             head.tab.y = y
+            previousY = y
         }
         if (list.isNotEmpty()) persist()
     }
 
-    private fun springTo(head: Head, targetX: Int, targetY: Int, vx: Float, vy: Float) {
+    private fun springTo(
+        head: Head,
+        targetX: Int,
+        targetY: Int,
+        vx: Float,
+        vy: Float,
+        dampingRatio: Float = 0.78f
+    ) {
         val p = head.params ?: return
         val view = head.view ?: return
 
@@ -733,6 +773,18 @@ class ChatHeadService : Service() {
         closeTarget = null
     }
 
+    private fun isNearCloseTarget(x: Float, y: Float): Boolean {
+        val target = closeTarget ?: return false
+        val pos = IntArray(2)
+        target.getLocationOnScreen(pos)
+        val cx = pos[0] + target.width / 2f
+        val cy = pos[1] + target.height / 2f
+        val r = target.width / 2f + dp(72)
+        val dx = x - cx
+        val dy = y - cy
+        return dx * dx + dy * dy <= r * r
+    }
+
     private fun isOverCloseTarget(x: Float, y: Float): Boolean {
         val target = closeTarget ?: return false
         val pos = IntArray(2)
@@ -820,7 +872,8 @@ class ChatHeadService : Service() {
         var view: View? = null,
         var params: WindowManager.LayoutParams? = null,
         var web: WebView? = null,
-        var icon: ImageView? = null
+        var icon: ImageView? = null,
+        var state: HeadState = HeadState.FREE
     )
 
     data class BubbleInfo(
@@ -841,5 +894,6 @@ class ChatHeadService : Service() {
         private const val DEFAULT_URL = "https://www.google.com"
         private const val NEW_TAB_URL = "about:blank"
         private const val CHANNEL_ID = "halo_floating_service"
+        private const val MAX_TABS = 4
     }
 }
