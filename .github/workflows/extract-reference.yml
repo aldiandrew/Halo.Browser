@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - ".github/workflows/extract-reference.yml"
+      - "reference-analysis/targeted-source.txt"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,54 +16,77 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install JADX
+      - name: Extract classes from existing JADX report
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/jadx"
-          curl -fsSL https://api.github.com/repos/skylot/jadx/releases/latest -o "$RUNNER_TEMP/release.json"
-          url="$(jq -r '.assets[] | select(.name == "jadx-1.5.6.zip") | .browser_download_url' "$RUNNER_TEMP/release.json")"
-          test -n "$url"
-          curl -fL "$url" -o "$RUNNER_TEMP/jadx/jadx.zip"
-          unzip -q "$RUNNER_TEMP/jadx/jadx.zip" -d "$RUNNER_TEMP/jadx"
-          JADX_BIN="$(find "$RUNNER_TEMP/jadx" -type f -path "*/bin/jadx" -print -quit)"
-          test -n "$JADX_BIN"
-          chmod +x "$JADX_BIN"
-echo "JADX_BIN=$JADX_BIN" >> "$GITHUB_ENV"
+          test -s reference-analysis/targeted-source.txt
+          rm -rf reference-source
+          mkdir -p reference-source
 
-      - name: Decompile reference
-        shell: bash
-        run: |
-          set -euo pipefail
-          bundle="$(find ss -maxdepth 1 -type f -name 'Bubble_ Fast Floating Browser 1.9.apk+' -print -quit)"
-          test -n "$bundle"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
 
-          rm -rf "$RUNNER_TEMP/ref" reference-source
-          mkdir -p "$RUNNER_TEMP/ref" reference-source
+          src = Path("reference-analysis/targeted-source.txt")
+          out = Path("reference-source")
+          wanted = (
+              "com/bubble/browser/pro/",
+              "com/flipkart/chatheads/ui/",
+          )
+          skip = {
+              "com/bubble/browser/pro/AdDisplayActivity.java",
+          }
 
-          unzip -p "$bundle" base.apk > "$RUNNER_TEMP/ref/base.apk"
-          test -s "$RUNNER_TEMP/ref/base.apk"
+          marker = re.compile(r"^FILE: (.+)$")
+          current = None
+          buf = []
 
-          "$JADX_BIN" --show-bad-code --threads-count 2 -d "$RUNNER_TEMP/ref/out" "$RUNNER_TEMP/ref/base.apk" >/dev/null 2>&1 || true
+          def flush(path, data):
+              if not path or not data:
+                  return
+              p = path.replace("\\", "/")
+              if not any(p.endswith(x) or x in p for x in wanted):
+                  return
+              if p.lstrip("/") in skip:
+                  return
+              rel = p.split("/sources/", 1)[-1]
+              if not any(rel.startswith(x) for x in wanted):
+                  return
+              dst = out / rel
+              dst.parent.mkdir(parents=True, exist_ok=True)
+              text = "".join(data)
+              if text.startswith("="):
+                  lines = text.splitlines(True)
+                  text = "".join(lines[1:]) if lines else text
+              dst.write_text(text, encoding="utf-8")
 
-          for pkg in com/bubble/browser/pro com/flipkart/chatheads/ui; do
-            src="$RUNNER_TEMP/ref/out/sources/$pkg"
-            if test -d "$src"; then
-              mkdir -p "reference-source/$pkg"
-              find "$src" -type f -name '*.java' -print0 | while IFS= read -r -d '' f; do
-                rel="${f#"$src"/}"
-                case "/$pkg/$rel" in
-                  */com/bubble/browser/pro/AdDisplayActivity.java) continue ;;
-                esac
-                cp "$f" "reference-source/$pkg/$rel"
-              done
-            fi
-          done
+          for line in src.open(encoding="utf-8", errors="replace"):
+              m = marker.match(line.rstrip("\n"))
+              if m:
+                  flush(current, buf)
+                  current = m.group(1)
+                  buf = []
+              elif current is not None:
+                  if line.startswith("================================================================") and not buf:
+                      continue
+                  buf.append(line)
 
-          echo "=== app classes ===" > reference-source/README.txt
-          find reference-source -type f -name '*.java' | sort >> reference-source/README.txt
-          echo >> reference-source/README.txt
-          echo "ads removed: AdDisplayActivity.java" >> reference-source/README.txt
+          flush(current, buf)
+
+          files = sorted(str(p) for p in out.rglob("*.java"))
+          if not files:
+              raise SystemExit("No reference app classes extracted")
+          print("\n".join(files))
+          PY
+
+          rm -f reference-source/com/bubble/browser/pro/AdDisplayActivity.java
+          cat > reference-source/README.md <<'EOF'
+          # Reference source reconstruction
+
+          Decompiled equivalent source extracted from the reference APK analysis.
+          Advertising activity is intentionally excluded.
+          EOF
 
       - name: Commit extracted source
         shell: bash
@@ -70,7 +95,5 @@ echo "JADX_BIN=$JADX_BIN" >> "$GITHUB_ENV"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add reference-source
-          git commit -m "Extract decompiled reference browser classes"
+          git commit -m "Extract reference browser classes without ads" || exit 0
           git push
-
-# trigger
