@@ -76,7 +76,6 @@ jobs:
             --show-bad-code \
             --deobf \
             --deobf-use-sourcename \
-            --deobf-parse-kotlin-metadata \
             --threads-count 2 \
             --output-dir reference-decompiled \
             "$REFERENCE_APK"
