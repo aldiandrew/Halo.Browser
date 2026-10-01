@@ -39,66 +39,106 @@ jobs:
           echo "JADX_BIN=$JADX_BIN" >> "$GITHUB_ENV"
           "$JADX_BIN" --version | tee reference-analysis/jadx-version.txt
 
-      - name: Inspect APK and extract DEX
+      - name: Unpack reference APK bundle and inspect real APK
         shell: bash
         run: |
           set -euo pipefail
 
-          apk="$(find ss -maxdepth 1 -type f -name 'Bubble_ Fast Floating Browser 1.9.apk+' -print -quit)"
-          test -n "$apk"
+          bundle="$(find ss -maxdepth 1 -type f -name 'Bubble_ Fast Floating Browser 1.9.apk+' -print -quit)"
+          test -n "$bundle"
 
-          cp "$apk" "$RUNNER_TEMP/reference.apk"
-          apk="$RUNNER_TEMP/reference.apk"
+          rm -rf "$RUNNER_TEMP/reference-bundle" "$RUNNER_TEMP/reference-apks" "$RUNNER_TEMP/dex-inputs" "$RUNNER_TEMP/decompiled-apk" "$RUNNER_TEMP/decompiled-dex"
+          mkdir -p "$RUNNER_TEMP/reference-bundle" "$RUNNER_TEMP/reference-apks" "$RUNNER_TEMP/dex-inputs" "$RUNNER_TEMP/decompiled-apk" "$RUNNER_TEMP/decompiled-dex"
 
-          rm -rf "$RUNNER_TEMP/dex-inputs" "$RUNNER_TEMP/decompiled-apk" "$RUNNER_TEMP/decompiled-dex"
-          mkdir -p "$RUNNER_TEMP/dex-inputs" "$RUNNER_TEMP/decompiled-apk" "$RUNNER_TEMP/decompiled-dex"
+          cp "$bundle" "$RUNNER_TEMP/reference-bundle.apk+"
 
-          echo "=== APK FILE ===" > reference-analysis/apk-info.txt
-          stat "$apk" >> reference-analysis/apk-info.txt
-          sha256sum "$apk" >> reference-analysis/apk-info.txt
+          echo "=== OUTER BUNDLE ===" > reference-analysis/bundle-info.txt
+          stat "$bundle" >> reference-analysis/bundle-info.txt
+          sha256sum "$bundle" >> reference-analysis/bundle-info.txt
 
-          echo "=== ZIP TEST ===" > reference-analysis/apk-zip-test.txt
-          unzip -t "$apk" >> reference-analysis/apk-zip-test.txt
+          unzip -t "$bundle" >> reference-analysis/bundle-info.txt
+          unzip -Z1 "$bundle" | sort > "$RUNNER_TEMP/bundle-entry-list.txt"
 
-          unzip -Z1 "$apk" | sort > "$RUNNER_TEMP/apk-entry-list.txt"
+          echo "=== BUNDLE CONTENTS ===" > reference-analysis/bundle-index.txt
+          cat "$RUNNER_TEMP/bundle-entry-list.txt" >> reference-analysis/bundle-index.txt
 
-          echo "=== APK ARCHIVE ===" > reference-analysis/apk-archive-index.txt
-          cat "$RUNNER_TEMP/apk-entry-list.txt" >> reference-analysis/apk-archive-index.txt
+          grep -E '\.apk$' "$RUNNER_TEMP/bundle-entry-list.txt" > "$RUNNER_TEMP/nested-apk-list.txt" || true
 
-          grep -Ei 'dex|manifest|resources\.arsc' "$RUNNER_TEMP/apk-entry-list.txt" > reference-analysis/apk-special-entries.txt || true
+          echo "=== NESTED APK FILES ===" > reference-analysis/nested-apk-index.txt
+          cat "$RUNNER_TEMP/nested-apk-list.txt" >> reference-analysis/nested-apk-index.txt || true
 
-          grep -E '^classes([0-9]+)?\.dex$' "$RUNNER_TEMP/apk-entry-list.txt" > "$RUNNER_TEMP/root-dex-list.txt" || true
+          while IFS= read -r nested; do
+            test -n "$nested"
+            name="$(basename "$nested")"
+            unzip -p "$bundle" "$nested" > "$RUNNER_TEMP/reference-apks/$name"
+            test -s "$RUNNER_TEMP/reference-apks/$name"
+            echo "=== $name ===" >> reference-analysis/nested-apk-index.txt
+            stat "$RUNNER_TEMP/reference-apks/$name" >> reference-analysis/nested-apk-index.txt
+            unzip -t "$RUNNER_TEMP/reference-apks/$name" >> reference-analysis/nested-apk-index.txt
+          done < "$RUNNER_TEMP/nested-apk-list.txt"
+
+          selected="$RUNNER_TEMP/reference-apks/base.apk"
+
+          if test ! -s "$selected"; then
+            selected="$(find "$RUNNER_TEMP/reference-apks" -maxdepth 1 -type f -name '*.apk' | sort | head -n1)"
+          fi
+
+          test -n "$selected"
+          test -s "$selected"
+
+          echo "SELECTED_APK=$selected" | tee reference-analysis/selected-apk.txt
+
+          echo "=== SELECTED APK ===" > reference-analysis/apk-info.txt
+          stat "$selected" >> reference-analysis/apk-info.txt
+          sha256sum "$selected" >> reference-analysis/apk-info.txt
+          unzip -Z1 "$selected" | sort > "$RUNNER_TEMP/selected-entry-list.txt"
+
+          echo "=== SELECTED APK ARCHIVE ===" > reference-analysis/apk-archive-index.txt
+          cat "$RUNNER_TEMP/selected-entry-list.txt" >> reference-analysis/apk-archive-index.txt
+
+          echo "=== SELECTED APK ZIP TEST ===" > reference-analysis/apk-zip-test.txt
+          unzip -t "$selected" >> reference-analysis/apk-zip-test.txt
+
+          grep -Ei 'dex|manifest|resources\.arsc' "$RUNNER_TEMP/selected-entry-list.txt" > reference-analysis/apk-special-entries.txt || true
+
+          grep -E '^classes([0-9]+)?\.dex$' "$RUNNER_TEMP/selected-entry-list.txt" > "$RUNNER_TEMP/root-dex-list.txt" || true
 
           echo "=== ROOT DEX FILES ===" > reference-analysis/dex-index.txt
           cat "$RUNNER_TEMP/root-dex-list.txt" >> reference-analysis/dex-index.txt || true
           echo "ROOT_DEX_COUNT=$(wc -l < "$RUNNER_TEMP/root-dex-list.txt")" >> reference-analysis/dex-index.txt
 
           echo "=== ALL DEX-LIKE PATHS ===" >> reference-analysis/dex-index.txt
-          grep -Ei '\.dex$|dex' "$RUNNER_TEMP/apk-entry-list.txt" >> reference-analysis/dex-index.txt || true
+          grep -Ei '\.dex$|dex' "$RUNNER_TEMP/selected-entry-list.txt" >> reference-analysis/dex-index.txt || true
 
           : > reference-analysis/dex-files-stat.txt
 
           while IFS= read -r dex_name; do
             test -n "$dex_name"
             base="$(basename "$dex_name")"
-            unzip -p "$apk" "$dex_name" > "$RUNNER_TEMP/dex-inputs/$base"
+            unzip -p "$selected" "$dex_name" > "$RUNNER_TEMP/dex-inputs/$base"
             test -s "$RUNNER_TEMP/dex-inputs/$base"
             echo "=== $base ===" >> reference-analysis/dex-files-stat.txt
             stat "$RUNNER_TEMP/dex-inputs/$base" >> reference-analysis/dex-files-stat.txt
           done < "$RUNNER_TEMP/root-dex-list.txt"
 
-      - name: Decompile APK and each DEX
+      - name: Decompile base APK and each DEX
         shell: bash
         run: |
           set -euo pipefail
 
-          apk="$RUNNER_TEMP/reference.apk"
+          selected="$RUNNER_TEMP/reference-apks/base.apk"
+          if test ! -s "$selected"; then
+            selected="$(find "$RUNNER_TEMP/reference-apks" -maxdepth 1 -type f -name '*.apk' | sort | head -n1)"
+          fi
+          test -s "$selected"
 
-          echo "=== JADX APK INPUT ===" > reference-analysis/jadx-apk-console.txt
+          echo "=== JADX BASE APK INPUT ===" > reference-analysis/jadx-apk-console.txt
+
           set +e
-          "$JADX_BIN"             --show-bad-code             --threads-count 2             -d "$RUNNER_TEMP/decompiled-apk"             "$apk" >> reference-analysis/jadx-apk-console.txt 2>&1
+          "$JADX_BIN"             --show-bad-code             --threads-count 2             -d "$RUNNER_TEMP/decompiled-apk"             "$selected" >> reference-analysis/jadx-apk-console.txt 2>&1
           apk_exit=$?
           set -e
+
           echo "APK_EXIT_CODE=$apk_exit" >> reference-analysis/jadx-apk-console.txt
 
           apk_count="$(find "$RUNNER_TEMP/decompiled-apk" -type f \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | wc -l)"
@@ -176,9 +216,7 @@ jobs:
 
           echo "=== PACKAGE COUNTS ===" > reference-analysis/package-counts.txt
 
-          if test -f reference-analysis/package-class-index.txt; then
-            tail -n +2 reference-analysis/package-class-index.txt               | cut -d'|' -f1               | sed 's/[[:space:]]*$//'               | sort | uniq -c | sort -nr               >> reference-analysis/package-counts.txt
-          fi
+          tail -n +2 reference-analysis/package-class-index.txt             | cut -d'|' -f1             | sed 's/[[:space:]]*$//'             | sort | uniq -c | sort -nr             >> reference-analysis/package-counts.txt || true
 
       - name: Commit analysis report
         shell: bash
@@ -195,5 +233,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Rebuild reference APK decompile analysis"
+          git commit -m "Decompile reference base APK for bubble reconstruction"
           git push
