@@ -56,14 +56,684 @@ jobs:
           echo "=== APK ARCHIVE ===" > reference-analysis/apk-archive-index.txt
           unzip -Z1 "$apk" | sort >> reference-analysis/apk-archive-index.txt
 
-          echo "=== DEX FILES ===" > reference-analysis/dex-index.txt
-          unzip -Z1 "$apk" | grep -E '^classes([0-9]+)?\.dex$' | sort -V | tee -a reference-analysis/dex-index.txt
+          echo "=== DEX FILES (ROOT) ===" > reference-analysis/dex-index.txt
+          unzip -Z1 "$apk" | grep -E '^classes([0-9]+)?\.dex
+            base="$(basename "$dex_name")"
+            unzip -p "$apk" "$dex_name" > "$RUNNER_TEMP/dex-inputs/$base"
+            test -s "$RUNNER_TEMP/dex-inputs/$base"
+            stat "$RUNNER_TEMP/dex-inputs/$base" >> reference-analysis/dex-files-stat.txt
+            done < <(grep -E '^classes([0-9]+)?\.dex
+          unzip -Z1 "$apk" | grep -E '(^|/)(AndroidManifest\.xml|resources\.arsc)$' | sort >> reference-analysis/apk-special-files.txt || true
 
-          dex_count="$(grep -Ec '^classes([0-9]+)?\.dex$' reference-analysis/dex-index.txt || true)"
+      - name: Decompile APK and DEX separately
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          apk="$RUNNER_TEMP/reference.apk"
+
+          echo "=== JADX VERSION ===" > reference-analysis/jadx-console.txt
+          "$JADX_BIN" --version >> reference-analysis/jadx-console.txt 2>&1 || true
+
+          echo >> reference-analysis/jadx-console.txt
+          echo "=== JADX APK INPUT ===" >> reference-analysis/jadx-console.txt
+          set +e
+          "$JADX_BIN" \
+            --show-bad-code \
+            --threads-count 2 \
+            -d "$RUNNER_TEMP/decompiled-apk" \
+            "$apk" >> reference-analysis/jadx-console.txt 2>&1
+          apk_exit=$?
+          set -e
+          echo "APK_EXIT_CODE=$apk_exit" >> reference-analysis/jadx-console.txt
+
+          echo "=== APK DECOMPILE FILE COUNTS ===" > reference-analysis/decompile-counts.txt
+          apk_java_count="$(find "$RUNNER_TEMP/decompiled-apk" -type f \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | wc -l)"
+          echo "APK_JAVA_KT_COUNT=$apk_java_count" | tee -a reference-analysis/decompile-counts.txt
+
+          : > reference-analysis/jadx-dex-console.txt
+
+          mapfile -t dex_files < <(find "$RUNNER_TEMP/dex-inputs" -maxdepth 1 -type f -name 'classes*.dex' | sort -V)
+
+          for dex in "${dex_files[@]}"; do
+            base="$(basename "$dex" .dex)"
+            out="$RUNNER_TEMP/decompiled-dex/$base"
+            mkdir -p "$out"
+
+            {
+              echo "=== INPUT: $dex ==="
+              stat "$dex"
+              echo "--- JADX OUTPUT ---"
+            } >> reference-analysis/jadx-dex-console.txt
+
+            set +e
+            "$JADX_BIN" \
+              --show-bad-code \
+              --threads-count 2 \
+              -d "$out" \
+              "$dex" >> reference-analysis/jadx-dex-console.txt 2>&1
+            dex_exit=$?
+            set -e
+
+            echo "DEX_EXIT_CODE=$dex_exit" >> reference-analysis/jadx-dex-console.txt
+            count="$(find "$out" -type f \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | wc -l)"
+            echo "DEX_SOURCE_COUNT=$count" >> reference-analysis/jadx-dex-console.txt
+            echo >> reference-analysis/jadx-dex-console.txt
+          done
+
+          echo "=== DEX SOURCE COUNTS ===" >> reference-analysis/decompile-counts.txt
+          find "$RUNNER_TEMP/decompiled-dex" -type f \( -name '*.java' -o -name '*.kt' \) | sort | awk -F/ '
+            {
+              for (i=1;i<=NF;i++) if ($i=="decompiled-dex") {print $(i+1); next}
+            }
+          ' | sort | uniq -c >> reference-analysis/decompile-counts.txt || true
+
+          find "$RUNNER_TEMP/decompiled-apk" "$RUNNER_TEMP/decompiled-dex" -type f \( -name '*.java' -o -name '*.kt' \) | sort > reference-analysis/all-decompiled-source-index.txt
+
+          total="$(wc -l < reference-analysis/all-decompiled-source-index.txt)"
+          echo "TOTAL_DECOMPILED_SOURCES=$total" >> reference-analysis/decompile-counts.txt
+
+      - name: Build reference structure report
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_root="$RUNNER_TEMP/decompiled-dex"
+          echo "=== DEX PACKAGE / CLASS STRUCTURE ===" > reference-analysis/package-class-index.txt
+
+          find "$source_root" -type f -name '*.java' | sort | while IFS= read -r file; do
+            rel="${file#"$source_root"/}"
+            pkg="$(grep -m1 '^package ' "$file" | sed 's/^package //; s/;//' || true)"
+            cls="$(grep -m1 -E '^[[:space:]]*(public |private |protected )?(final |abstract )?(class|interface|enum) ' "$file" | sed -E 's/^[[:space:]]*(public |private |protected )?//; s/^(final |abstract )?//; s/^(class|interface|enum) //; s/[ {].*$//' || true)"
+            printf '%s | %s | %s\n' "${pkg:-<no-package>}" "${cls:-<unknown-class>}" "$rel"
+          done | sort >> reference-analysis/package-class-index.txt
+
+          echo "=== ANDROID/BUBBLE RELATED SOURCE FILES ===" > reference-analysis/targeted-class-index.txt
+          grep -RIl -E 'WindowManager|TYPE_APPLICATION_OVERLAY|SYSTEM_ALERT_WINDOW|AccessibilityService|MotionEvent|GestureDetector|VelocityTracker|snap|dock|edge|drag|close|resize|minimi|expand|bubble|floating|chat.?head|WebView|ForegroundService|startForeground|Notification|service|Spring|physics|fling|touch|browser.?manager' "$source_root" | sort >> reference-analysis/targeted-class-index.txt || true
+
+          echo "=== TARGETED SOURCE CONTENT ===" > reference-analysis/targeted-source.txt
+          while IFS= read -r file; do
+            echo >> reference-analysis/targeted-source.txt
+            echo "================================================================" >> reference-analysis/targeted-source.txt
+            echo "FILE: $file" >> reference-analysis/targeted-source.txt
+            echo "================================================================" >> reference-analysis/targeted-source.txt
+            cat "$file" >> reference-analysis/targeted-source.txt
+          done < <(tail -n +2 reference-analysis/targeted-class-index.txt)
+
+          echo "=== TARGETED SYMBOL HITS ===" > reference-analysis/symbol-hits.txt
+          grep -Rni -E 'WindowManager\.LayoutParams|TYPE_APPLICATION_OVERLAY|TYPE_PHONE|TYPE_SYSTEM_ALERT|FLAG_NOT_FOCUSABLE|FLAG_NOT_TOUCH_MODAL|FLAG_LAYOUT_IN_SCREEN|FLAG_ALT_FOCUSABLE_IM|onTouchEvent|setOnTouchListener|ACTION_DOWN|ACTION_MOVE|ACTION_UP|ACTION_CANCEL|VelocityTracker|GestureDetector|OVERLAY|BUBBLE|FLOAT|SERVICE|NOTIFICATION|Spring|spring|fling|translationX|translationY|x|y' "$source_root" >> reference-analysis/symbol-hits.txt || true
+
+          echo "=== ALL SERVICE / MANAGER / CHATHEAD NAMES ===" > reference-analysis/component-hints.txt
+          find "$source_root" -type f -name '*.java' | grep -Ei '(service|manager|chat|head|bubble|floating|overlay|browser|tab|webview|gesture|drag|spring|touch|notification)' | sort >> reference-analysis/component-hints.txt || true
+
+          echo "=== SOURCE ROOTS ===" > reference-analysis/source-roots.txt
+          find "$RUNNER_TEMP" -type d \( -name sources -o -name decompiled-dex -o -name decompiled-apk \) | sort >> reference-analysis/source-roots.txt
+
+      - name: Commit analysis report
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add reference-analysis
+          git add reference-analysis-jadx-version.txt
+          if git diff --cached --quiet; then
+            echo "No report changes."
+            exit 0
+          fi
+
+          git commit -m "Rebuild reference APK decompile analysis"
+          git push
+ | sort -V >> reference-analysis/dex-index.txt || true
+
+          echo "=== ALL DEX-LIKE PATHS ===" >> reference-analysis/dex-index.txt
+          unzip -Z1 "$apk" | grep -Ei '\\.dex$|dex' | sort -V >> reference-analysis/dex-index.txt || true
+
+          dex_count="$(grep -Ec '^classes([0-9]+)?\.dex
+            base="$(basename "$dex_name")"
+            unzip -p "$apk" "$dex_name" > "$RUNNER_TEMP/dex-inputs/$base"
+            test -s "$RUNNER_TEMP/dex-inputs/$base"
+            stat "$RUNNER_TEMP/dex-inputs/$base" >> reference-analysis/dex-files-stat.txt
+          done < <(grep -E '^classes([0-9]+)?\.dex$' reference-analysis/dex-index.txt)
+
+          echo "=== MANIFEST / RESOURCE FILES ===" > reference-analysis/apk-special-files.txt
+          unzip -Z1 "$apk" | grep -E '(^|/)(AndroidManifest\.xml|resources\.arsc)$' | sort >> reference-analysis/apk-special-files.txt || true
+
+      - name: Decompile APK and DEX separately
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          apk="$RUNNER_TEMP/reference.apk"
+
+          echo "=== JADX VERSION ===" > reference-analysis/jadx-console.txt
+          "$JADX_BIN" --version >> reference-analysis/jadx-console.txt 2>&1 || true
+
+          echo >> reference-analysis/jadx-console.txt
+          echo "=== JADX APK INPUT ===" >> reference-analysis/jadx-console.txt
+          set +e
+          "$JADX_BIN" \
+            --show-bad-code \
+            --threads-count 2 \
+            -d "$RUNNER_TEMP/decompiled-apk" \
+            "$apk" >> reference-analysis/jadx-console.txt 2>&1
+          apk_exit=$?
+          set -e
+          echo "APK_EXIT_CODE=$apk_exit" >> reference-analysis/jadx-console.txt
+
+          echo "=== APK DECOMPILE FILE COUNTS ===" > reference-analysis/decompile-counts.txt
+          apk_java_count="$(find "$RUNNER_TEMP/decompiled-apk" -type f \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | wc -l)"
+          echo "APK_JAVA_KT_COUNT=$apk_java_count" | tee -a reference-analysis/decompile-counts.txt
+
+          : > reference-analysis/jadx-dex-console.txt
+
+          mapfile -t dex_files < <(find "$RUNNER_TEMP/dex-inputs" -maxdepth 1 -type f -name 'classes*.dex' | sort -V)
+          test "${#dex_files[@]}" -gt 0
+
+          for dex in "${dex_files[@]}"; do
+            base="$(basename "$dex" .dex)"
+            out="$RUNNER_TEMP/decompiled-dex/$base"
+            mkdir -p "$out"
+
+            {
+              echo "=== INPUT: $dex ==="
+              stat "$dex"
+              echo "--- JADX OUTPUT ---"
+            } >> reference-analysis/jadx-dex-console.txt
+
+            set +e
+            "$JADX_BIN" \
+              --show-bad-code \
+              --threads-count 2 \
+              -d "$out" \
+              "$dex" >> reference-analysis/jadx-dex-console.txt 2>&1
+            dex_exit=$?
+            set -e
+
+            echo "DEX_EXIT_CODE=$dex_exit" >> reference-analysis/jadx-dex-console.txt
+            count="$(find "$out" -type f \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | wc -l)"
+            echo "DEX_SOURCE_COUNT=$count" >> reference-analysis/jadx-dex-console.txt
+            echo >> reference-analysis/jadx-dex-console.txt
+          done
+
+          echo "=== DEX SOURCE COUNTS ===" >> reference-analysis/decompile-counts.txt
+          find "$RUNNER_TEMP/decompiled-dex" -type f \( -name '*.java' -o -name '*.kt' \) | sort | awk -F/ '
+            {
+              for (i=1;i<=NF;i++) if ($i=="decompiled-dex") {print $(i+1); next}
+            }
+          ' | sort | uniq -c >> reference-analysis/decompile-counts.txt || true
+
+          find "$RUNNER_TEMP/decompiled-apk" "$RUNNER_TEMP/decompiled-dex" -type f \( -name '*.java' -o -name '*.kt' \) | sort > reference-analysis/all-decompiled-source-index.txt
+
+          total="$(wc -l < reference-analysis/all-decompiled-source-index.txt)"
+          echo "TOTAL_DECOMPILED_SOURCES=$total" >> reference-analysis/decompile-counts.txt
+
+          test "$total" -gt 0
+
+      - name: Build reference structure report
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_root="$RUNNER_TEMP/decompiled-dex"
+          echo "=== DEX PACKAGE / CLASS STRUCTURE ===" > reference-analysis/package-class-index.txt
+
+          find "$source_root" -type f -name '*.java' | sort | while IFS= read -r file; do
+            rel="${file#"$source_root"/}"
+            pkg="$(grep -m1 '^package ' "$file" | sed 's/^package //; s/;//' || true)"
+            cls="$(grep -m1 -E '^[[:space:]]*(public |private |protected )?(final |abstract )?(class|interface|enum) ' "$file" | sed -E 's/^[[:space:]]*(public |private |protected )?//; s/^(final |abstract )?//; s/^(class|interface|enum) //; s/[ {].*$//' || true)"
+            printf '%s | %s | %s\n' "${pkg:-<no-package>}" "${cls:-<unknown-class>}" "$rel"
+          done | sort >> reference-analysis/package-class-index.txt
+
+          echo "=== ANDROID/BUBBLE RELATED SOURCE FILES ===" > reference-analysis/targeted-class-index.txt
+          grep -RIl -E 'WindowManager|TYPE_APPLICATION_OVERLAY|SYSTEM_ALERT_WINDOW|AccessibilityService|MotionEvent|GestureDetector|VelocityTracker|snap|dock|edge|drag|close|resize|minimi|expand|bubble|floating|chat.?head|WebView|ForegroundService|startForeground|Notification|service|Spring|physics|fling|touch|browser.?manager' "$source_root" | sort >> reference-analysis/targeted-class-index.txt || true
+
+          echo "=== TARGETED SOURCE CONTENT ===" > reference-analysis/targeted-source.txt
+          while IFS= read -r file; do
+            echo >> reference-analysis/targeted-source.txt
+            echo "================================================================" >> reference-analysis/targeted-source.txt
+            echo "FILE: $file" >> reference-analysis/targeted-source.txt
+            echo "================================================================" >> reference-analysis/targeted-source.txt
+            cat "$file" >> reference-analysis/targeted-source.txt
+          done < <(tail -n +2 reference-analysis/targeted-class-index.txt)
+
+          echo "=== TARGETED SYMBOL HITS ===" > reference-analysis/symbol-hits.txt
+          grep -Rni -E 'WindowManager\.LayoutParams|TYPE_APPLICATION_OVERLAY|TYPE_PHONE|TYPE_SYSTEM_ALERT|FLAG_NOT_FOCUSABLE|FLAG_NOT_TOUCH_MODAL|FLAG_LAYOUT_IN_SCREEN|FLAG_ALT_FOCUSABLE_IM|onTouchEvent|setOnTouchListener|ACTION_DOWN|ACTION_MOVE|ACTION_UP|ACTION_CANCEL|VelocityTracker|GestureDetector|OVERLAY|BUBBLE|FLOAT|SERVICE|NOTIFICATION|Spring|spring|fling|translationX|translationY|x|y' "$source_root" >> reference-analysis/symbol-hits.txt || true
+
+          echo "=== ALL SERVICE / MANAGER / CHATHEAD NAMES ===" > reference-analysis/component-hints.txt
+          find "$source_root" -type f -name '*.java' | grep -Ei '(service|manager|chat|head|bubble|floating|overlay|browser|tab|webview|gesture|drag|spring|touch|notification)' | sort >> reference-analysis/component-hints.txt || true
+
+          echo "=== SOURCE ROOTS ===" > reference-analysis/source-roots.txt
+          find "$RUNNER_TEMP" -type d \( -name sources -o -name decompiled-dex -o -name decompiled-apk \) | sort >> reference-analysis/source-roots.txt
+
+      - name: Commit analysis report
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add reference-analysis
+          git add reference-analysis-jadx-version.txt
+          if git diff --cached --quiet; then
+            echo "No report changes."
+            exit 0
+          fi
+
+          git commit -m "Rebuild reference APK decompile analysis"
+          git push
+ reference-analysis/dex-index.txt || true)"
           echo "DEX_COUNT=$dex_count" >> reference-analysis/dex-index.txt
-          test "$dex_count" -gt 0
 
-          while IFS= read -r dex_name; do
+          : > reference-analysis/dex-files-stat.txt
+          if test "$dex_count" -gt 0; then
+            while IFS= read -r dex_name; do
+            base="$(basename "$dex_name")"
+            unzip -p "$apk" "$dex_name" > "$RUNNER_TEMP/dex-inputs/$base"
+            test -s "$RUNNER_TEMP/dex-inputs/$base"
+            stat "$RUNNER_TEMP/dex-inputs/$base" >> reference-analysis/dex-files-stat.txt
+          done < <(grep -E '^classes([0-9]+)?\.dex$' reference-analysis/dex-index.txt)
+
+          echo "=== MANIFEST / RESOURCE FILES ===" > reference-analysis/apk-special-files.txt
+          unzip -Z1 "$apk" | grep -E '(^|/)(AndroidManifest\.xml|resources\.arsc)$' | sort >> reference-analysis/apk-special-files.txt || true
+
+      - name: Decompile APK and DEX separately
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          apk="$RUNNER_TEMP/reference.apk"
+
+          echo "=== JADX VERSION ===" > reference-analysis/jadx-console.txt
+          "$JADX_BIN" --version >> reference-analysis/jadx-console.txt 2>&1 || true
+
+          echo >> reference-analysis/jadx-console.txt
+          echo "=== JADX APK INPUT ===" >> reference-analysis/jadx-console.txt
+          set +e
+          "$JADX_BIN" \
+            --show-bad-code \
+            --threads-count 2 \
+            -d "$RUNNER_TEMP/decompiled-apk" \
+            "$apk" >> reference-analysis/jadx-console.txt 2>&1
+          apk_exit=$?
+          set -e
+          echo "APK_EXIT_CODE=$apk_exit" >> reference-analysis/jadx-console.txt
+
+          echo "=== APK DECOMPILE FILE COUNTS ===" > reference-analysis/decompile-counts.txt
+          apk_java_count="$(find "$RUNNER_TEMP/decompiled-apk" -type f \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | wc -l)"
+          echo "APK_JAVA_KT_COUNT=$apk_java_count" | tee -a reference-analysis/decompile-counts.txt
+
+          : > reference-analysis/jadx-dex-console.txt
+
+          mapfile -t dex_files < <(find "$RUNNER_TEMP/dex-inputs" -maxdepth 1 -type f -name 'classes*.dex' | sort -V)
+          test "${#dex_files[@]}" -gt 0
+
+          for dex in "${dex_files[@]}"; do
+            base="$(basename "$dex" .dex)"
+            out="$RUNNER_TEMP/decompiled-dex/$base"
+            mkdir -p "$out"
+
+            {
+              echo "=== INPUT: $dex ==="
+              stat "$dex"
+              echo "--- JADX OUTPUT ---"
+            } >> reference-analysis/jadx-dex-console.txt
+
+            set +e
+            "$JADX_BIN" \
+              --show-bad-code \
+              --threads-count 2 \
+              -d "$out" \
+              "$dex" >> reference-analysis/jadx-dex-console.txt 2>&1
+            dex_exit=$?
+            set -e
+
+            echo "DEX_EXIT_CODE=$dex_exit" >> reference-analysis/jadx-dex-console.txt
+            count="$(find "$out" -type f \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | wc -l)"
+            echo "DEX_SOURCE_COUNT=$count" >> reference-analysis/jadx-dex-console.txt
+            echo >> reference-analysis/jadx-dex-console.txt
+          done
+
+          echo "=== DEX SOURCE COUNTS ===" >> reference-analysis/decompile-counts.txt
+          find "$RUNNER_TEMP/decompiled-dex" -type f \( -name '*.java' -o -name '*.kt' \) | sort | awk -F/ '
+            {
+              for (i=1;i<=NF;i++) if ($i=="decompiled-dex") {print $(i+1); next}
+            }
+          ' | sort | uniq -c >> reference-analysis/decompile-counts.txt || true
+
+          find "$RUNNER_TEMP/decompiled-apk" "$RUNNER_TEMP/decompiled-dex" -type f \( -name '*.java' -o -name '*.kt' \) | sort > reference-analysis/all-decompiled-source-index.txt
+
+          total="$(wc -l < reference-analysis/all-decompiled-source-index.txt)"
+          echo "TOTAL_DECOMPILED_SOURCES=$total" >> reference-analysis/decompile-counts.txt
+
+          test "$total" -gt 0
+
+      - name: Build reference structure report
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_root="$RUNNER_TEMP/decompiled-dex"
+          echo "=== DEX PACKAGE / CLASS STRUCTURE ===" > reference-analysis/package-class-index.txt
+
+          find "$source_root" -type f -name '*.java' | sort | while IFS= read -r file; do
+            rel="${file#"$source_root"/}"
+            pkg="$(grep -m1 '^package ' "$file" | sed 's/^package //; s/;//' || true)"
+            cls="$(grep -m1 -E '^[[:space:]]*(public |private |protected )?(final |abstract )?(class|interface|enum) ' "$file" | sed -E 's/^[[:space:]]*(public |private |protected )?//; s/^(final |abstract )?//; s/^(class|interface|enum) //; s/[ {].*$//' || true)"
+            printf '%s | %s | %s\n' "${pkg:-<no-package>}" "${cls:-<unknown-class>}" "$rel"
+          done | sort >> reference-analysis/package-class-index.txt
+
+          echo "=== ANDROID/BUBBLE RELATED SOURCE FILES ===" > reference-analysis/targeted-class-index.txt
+          grep -RIl -E 'WindowManager|TYPE_APPLICATION_OVERLAY|SYSTEM_ALERT_WINDOW|AccessibilityService|MotionEvent|GestureDetector|VelocityTracker|snap|dock|edge|drag|close|resize|minimi|expand|bubble|floating|chat.?head|WebView|ForegroundService|startForeground|Notification|service|Spring|physics|fling|touch|browser.?manager' "$source_root" | sort >> reference-analysis/targeted-class-index.txt || true
+
+          echo "=== TARGETED SOURCE CONTENT ===" > reference-analysis/targeted-source.txt
+          while IFS= read -r file; do
+            echo >> reference-analysis/targeted-source.txt
+            echo "================================================================" >> reference-analysis/targeted-source.txt
+            echo "FILE: $file" >> reference-analysis/targeted-source.txt
+            echo "================================================================" >> reference-analysis/targeted-source.txt
+            cat "$file" >> reference-analysis/targeted-source.txt
+          done < <(tail -n +2 reference-analysis/targeted-class-index.txt)
+
+          echo "=== TARGETED SYMBOL HITS ===" > reference-analysis/symbol-hits.txt
+          grep -Rni -E 'WindowManager\.LayoutParams|TYPE_APPLICATION_OVERLAY|TYPE_PHONE|TYPE_SYSTEM_ALERT|FLAG_NOT_FOCUSABLE|FLAG_NOT_TOUCH_MODAL|FLAG_LAYOUT_IN_SCREEN|FLAG_ALT_FOCUSABLE_IM|onTouchEvent|setOnTouchListener|ACTION_DOWN|ACTION_MOVE|ACTION_UP|ACTION_CANCEL|VelocityTracker|GestureDetector|OVERLAY|BUBBLE|FLOAT|SERVICE|NOTIFICATION|Spring|spring|fling|translationX|translationY|x|y' "$source_root" >> reference-analysis/symbol-hits.txt || true
+
+          echo "=== ALL SERVICE / MANAGER / CHATHEAD NAMES ===" > reference-analysis/component-hints.txt
+          find "$source_root" -type f -name '*.java' | grep -Ei '(service|manager|chat|head|bubble|floating|overlay|browser|tab|webview|gesture|drag|spring|touch|notification)' | sort >> reference-analysis/component-hints.txt || true
+
+          echo "=== SOURCE ROOTS ===" > reference-analysis/source-roots.txt
+          find "$RUNNER_TEMP" -type d \( -name sources -o -name decompiled-dex -o -name decompiled-apk \) | sort >> reference-analysis/source-roots.txt
+
+      - name: Commit analysis report
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add reference-analysis
+          git add reference-analysis-jadx-version.txt
+          if git diff --cached --quiet; then
+            echo "No report changes."
+            exit 0
+          fi
+
+          git commit -m "Rebuild reference APK decompile analysis"
+          git push
+ reference-analysis/dex-index.txt)
+          fi
+
+          echo "=== MANIFEST / RESOURCE FILES ===" > reference-analysis/apk-special-files.txt
+          unzip -Z1 "$apk" | grep -E '(^|/)(AndroidManifest\.xml|resources\.arsc)$' | sort >> reference-analysis/apk-special-files.txt || true
+
+      - name: Decompile APK and DEX separately
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          apk="$RUNNER_TEMP/reference.apk"
+
+          echo "=== JADX VERSION ===" > reference-analysis/jadx-console.txt
+          "$JADX_BIN" --version >> reference-analysis/jadx-console.txt 2>&1 || true
+
+          echo >> reference-analysis/jadx-console.txt
+          echo "=== JADX APK INPUT ===" >> reference-analysis/jadx-console.txt
+          set +e
+          "$JADX_BIN" \
+            --show-bad-code \
+            --threads-count 2 \
+            -d "$RUNNER_TEMP/decompiled-apk" \
+            "$apk" >> reference-analysis/jadx-console.txt 2>&1
+          apk_exit=$?
+          set -e
+          echo "APK_EXIT_CODE=$apk_exit" >> reference-analysis/jadx-console.txt
+
+          echo "=== APK DECOMPILE FILE COUNTS ===" > reference-analysis/decompile-counts.txt
+          apk_java_count="$(find "$RUNNER_TEMP/decompiled-apk" -type f \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | wc -l)"
+          echo "APK_JAVA_KT_COUNT=$apk_java_count" | tee -a reference-analysis/decompile-counts.txt
+
+          : > reference-analysis/jadx-dex-console.txt
+
+          mapfile -t dex_files < <(find "$RUNNER_TEMP/dex-inputs" -maxdepth 1 -type f -name 'classes*.dex' | sort -V)
+          test "${#dex_files[@]}" -gt 0
+
+          for dex in "${dex_files[@]}"; do
+            base="$(basename "$dex" .dex)"
+            out="$RUNNER_TEMP/decompiled-dex/$base"
+            mkdir -p "$out"
+
+            {
+              echo "=== INPUT: $dex ==="
+              stat "$dex"
+              echo "--- JADX OUTPUT ---"
+            } >> reference-analysis/jadx-dex-console.txt
+
+            set +e
+            "$JADX_BIN" \
+              --show-bad-code \
+              --threads-count 2 \
+              -d "$out" \
+              "$dex" >> reference-analysis/jadx-dex-console.txt 2>&1
+            dex_exit=$?
+            set -e
+
+            echo "DEX_EXIT_CODE=$dex_exit" >> reference-analysis/jadx-dex-console.txt
+            count="$(find "$out" -type f \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | wc -l)"
+            echo "DEX_SOURCE_COUNT=$count" >> reference-analysis/jadx-dex-console.txt
+            echo >> reference-analysis/jadx-dex-console.txt
+          done
+
+          echo "=== DEX SOURCE COUNTS ===" >> reference-analysis/decompile-counts.txt
+          find "$RUNNER_TEMP/decompiled-dex" -type f \( -name '*.java' -o -name '*.kt' \) | sort | awk -F/ '
+            {
+              for (i=1;i<=NF;i++) if ($i=="decompiled-dex") {print $(i+1); next}
+            }
+          ' | sort | uniq -c >> reference-analysis/decompile-counts.txt || true
+
+          find "$RUNNER_TEMP/decompiled-apk" "$RUNNER_TEMP/decompiled-dex" -type f \( -name '*.java' -o -name '*.kt' \) | sort > reference-analysis/all-decompiled-source-index.txt
+
+          total="$(wc -l < reference-analysis/all-decompiled-source-index.txt)"
+          echo "TOTAL_DECOMPILED_SOURCES=$total" >> reference-analysis/decompile-counts.txt
+
+          test "$total" -gt 0
+
+      - name: Build reference structure report
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_root="$RUNNER_TEMP/decompiled-dex"
+          echo "=== DEX PACKAGE / CLASS STRUCTURE ===" > reference-analysis/package-class-index.txt
+
+          find "$source_root" -type f -name '*.java' | sort | while IFS= read -r file; do
+            rel="${file#"$source_root"/}"
+            pkg="$(grep -m1 '^package ' "$file" | sed 's/^package //; s/;//' || true)"
+            cls="$(grep -m1 -E '^[[:space:]]*(public |private |protected )?(final |abstract )?(class|interface|enum) ' "$file" | sed -E 's/^[[:space:]]*(public |private |protected )?//; s/^(final |abstract )?//; s/^(class|interface|enum) //; s/[ {].*$//' || true)"
+            printf '%s | %s | %s\n' "${pkg:-<no-package>}" "${cls:-<unknown-class>}" "$rel"
+          done | sort >> reference-analysis/package-class-index.txt
+
+          echo "=== ANDROID/BUBBLE RELATED SOURCE FILES ===" > reference-analysis/targeted-class-index.txt
+          grep -RIl -E 'WindowManager|TYPE_APPLICATION_OVERLAY|SYSTEM_ALERT_WINDOW|AccessibilityService|MotionEvent|GestureDetector|VelocityTracker|snap|dock|edge|drag|close|resize|minimi|expand|bubble|floating|chat.?head|WebView|ForegroundService|startForeground|Notification|service|Spring|physics|fling|touch|browser.?manager' "$source_root" | sort >> reference-analysis/targeted-class-index.txt || true
+
+          echo "=== TARGETED SOURCE CONTENT ===" > reference-analysis/targeted-source.txt
+          while IFS= read -r file; do
+            echo >> reference-analysis/targeted-source.txt
+            echo "================================================================" >> reference-analysis/targeted-source.txt
+            echo "FILE: $file" >> reference-analysis/targeted-source.txt
+            echo "================================================================" >> reference-analysis/targeted-source.txt
+            cat "$file" >> reference-analysis/targeted-source.txt
+          done < <(tail -n +2 reference-analysis/targeted-class-index.txt)
+
+          echo "=== TARGETED SYMBOL HITS ===" > reference-analysis/symbol-hits.txt
+          grep -Rni -E 'WindowManager\.LayoutParams|TYPE_APPLICATION_OVERLAY|TYPE_PHONE|TYPE_SYSTEM_ALERT|FLAG_NOT_FOCUSABLE|FLAG_NOT_TOUCH_MODAL|FLAG_LAYOUT_IN_SCREEN|FLAG_ALT_FOCUSABLE_IM|onTouchEvent|setOnTouchListener|ACTION_DOWN|ACTION_MOVE|ACTION_UP|ACTION_CANCEL|VelocityTracker|GestureDetector|OVERLAY|BUBBLE|FLOAT|SERVICE|NOTIFICATION|Spring|spring|fling|translationX|translationY|x|y' "$source_root" >> reference-analysis/symbol-hits.txt || true
+
+          echo "=== ALL SERVICE / MANAGER / CHATHEAD NAMES ===" > reference-analysis/component-hints.txt
+          find "$source_root" -type f -name '*.java' | grep -Ei '(service|manager|chat|head|bubble|floating|overlay|browser|tab|webview|gesture|drag|spring|touch|notification)' | sort >> reference-analysis/component-hints.txt || true
+
+          echo "=== SOURCE ROOTS ===" > reference-analysis/source-roots.txt
+          find "$RUNNER_TEMP" -type d \( -name sources -o -name decompiled-dex -o -name decompiled-apk \) | sort >> reference-analysis/source-roots.txt
+
+      - name: Commit analysis report
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add reference-analysis
+          git add reference-analysis-jadx-version.txt
+          if git diff --cached --quiet; then
+            echo "No report changes."
+            exit 0
+          fi
+
+          git commit -m "Rebuild reference APK decompile analysis"
+          git push
+ | sort -V >> reference-analysis/dex-index.txt || true
+
+          echo "=== ALL DEX-LIKE PATHS ===" >> reference-analysis/dex-index.txt
+          unzip -Z1 "$apk" | grep -Ei '\\.dex$|dex' | sort -V >> reference-analysis/dex-index.txt || true
+
+          dex_count="$(grep -Ec '^classes([0-9]+)?\.dex
+            base="$(basename "$dex_name")"
+            unzip -p "$apk" "$dex_name" > "$RUNNER_TEMP/dex-inputs/$base"
+            test -s "$RUNNER_TEMP/dex-inputs/$base"
+            stat "$RUNNER_TEMP/dex-inputs/$base" >> reference-analysis/dex-files-stat.txt
+          done < <(grep -E '^classes([0-9]+)?\.dex$' reference-analysis/dex-index.txt)
+
+          echo "=== MANIFEST / RESOURCE FILES ===" > reference-analysis/apk-special-files.txt
+          unzip -Z1 "$apk" | grep -E '(^|/)(AndroidManifest\.xml|resources\.arsc)$' | sort >> reference-analysis/apk-special-files.txt || true
+
+      - name: Decompile APK and DEX separately
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          apk="$RUNNER_TEMP/reference.apk"
+
+          echo "=== JADX VERSION ===" > reference-analysis/jadx-console.txt
+          "$JADX_BIN" --version >> reference-analysis/jadx-console.txt 2>&1 || true
+
+          echo >> reference-analysis/jadx-console.txt
+          echo "=== JADX APK INPUT ===" >> reference-analysis/jadx-console.txt
+          set +e
+          "$JADX_BIN" \
+            --show-bad-code \
+            --threads-count 2 \
+            -d "$RUNNER_TEMP/decompiled-apk" \
+            "$apk" >> reference-analysis/jadx-console.txt 2>&1
+          apk_exit=$?
+          set -e
+          echo "APK_EXIT_CODE=$apk_exit" >> reference-analysis/jadx-console.txt
+
+          echo "=== APK DECOMPILE FILE COUNTS ===" > reference-analysis/decompile-counts.txt
+          apk_java_count="$(find "$RUNNER_TEMP/decompiled-apk" -type f \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | wc -l)"
+          echo "APK_JAVA_KT_COUNT=$apk_java_count" | tee -a reference-analysis/decompile-counts.txt
+
+          : > reference-analysis/jadx-dex-console.txt
+
+          mapfile -t dex_files < <(find "$RUNNER_TEMP/dex-inputs" -maxdepth 1 -type f -name 'classes*.dex' | sort -V)
+          test "${#dex_files[@]}" -gt 0
+
+          for dex in "${dex_files[@]}"; do
+            base="$(basename "$dex" .dex)"
+            out="$RUNNER_TEMP/decompiled-dex/$base"
+            mkdir -p "$out"
+
+            {
+              echo "=== INPUT: $dex ==="
+              stat "$dex"
+              echo "--- JADX OUTPUT ---"
+            } >> reference-analysis/jadx-dex-console.txt
+
+            set +e
+            "$JADX_BIN" \
+              --show-bad-code \
+              --threads-count 2 \
+              -d "$out" \
+              "$dex" >> reference-analysis/jadx-dex-console.txt 2>&1
+            dex_exit=$?
+            set -e
+
+            echo "DEX_EXIT_CODE=$dex_exit" >> reference-analysis/jadx-dex-console.txt
+            count="$(find "$out" -type f \( -name '*.java' -o -name '*.kt' \) 2>/dev/null | wc -l)"
+            echo "DEX_SOURCE_COUNT=$count" >> reference-analysis/jadx-dex-console.txt
+            echo >> reference-analysis/jadx-dex-console.txt
+          done
+
+          echo "=== DEX SOURCE COUNTS ===" >> reference-analysis/decompile-counts.txt
+          find "$RUNNER_TEMP/decompiled-dex" -type f \( -name '*.java' -o -name '*.kt' \) | sort | awk -F/ '
+            {
+              for (i=1;i<=NF;i++) if ($i=="decompiled-dex") {print $(i+1); next}
+            }
+          ' | sort | uniq -c >> reference-analysis/decompile-counts.txt || true
+
+          find "$RUNNER_TEMP/decompiled-apk" "$RUNNER_TEMP/decompiled-dex" -type f \( -name '*.java' -o -name '*.kt' \) | sort > reference-analysis/all-decompiled-source-index.txt
+
+          total="$(wc -l < reference-analysis/all-decompiled-source-index.txt)"
+          echo "TOTAL_DECOMPILED_SOURCES=$total" >> reference-analysis/decompile-counts.txt
+
+          test "$total" -gt 0
+
+      - name: Build reference structure report
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_root="$RUNNER_TEMP/decompiled-dex"
+          echo "=== DEX PACKAGE / CLASS STRUCTURE ===" > reference-analysis/package-class-index.txt
+
+          find "$source_root" -type f -name '*.java' | sort | while IFS= read -r file; do
+            rel="${file#"$source_root"/}"
+            pkg="$(grep -m1 '^package ' "$file" | sed 's/^package //; s/;//' || true)"
+            cls="$(grep -m1 -E '^[[:space:]]*(public |private |protected )?(final |abstract )?(class|interface|enum) ' "$file" | sed -E 's/^[[:space:]]*(public |private |protected )?//; s/^(final |abstract )?//; s/^(class|interface|enum) //; s/[ {].*$//' || true)"
+            printf '%s | %s | %s\n' "${pkg:-<no-package>}" "${cls:-<unknown-class>}" "$rel"
+          done | sort >> reference-analysis/package-class-index.txt
+
+          echo "=== ANDROID/BUBBLE RELATED SOURCE FILES ===" > reference-analysis/targeted-class-index.txt
+          grep -RIl -E 'WindowManager|TYPE_APPLICATION_OVERLAY|SYSTEM_ALERT_WINDOW|AccessibilityService|MotionEvent|GestureDetector|VelocityTracker|snap|dock|edge|drag|close|resize|minimi|expand|bubble|floating|chat.?head|WebView|ForegroundService|startForeground|Notification|service|Spring|physics|fling|touch|browser.?manager' "$source_root" | sort >> reference-analysis/targeted-class-index.txt || true
+
+          echo "=== TARGETED SOURCE CONTENT ===" > reference-analysis/targeted-source.txt
+          while IFS= read -r file; do
+            echo >> reference-analysis/targeted-source.txt
+            echo "================================================================" >> reference-analysis/targeted-source.txt
+            echo "FILE: $file" >> reference-analysis/targeted-source.txt
+            echo "================================================================" >> reference-analysis/targeted-source.txt
+            cat "$file" >> reference-analysis/targeted-source.txt
+          done < <(tail -n +2 reference-analysis/targeted-class-index.txt)
+
+          echo "=== TARGETED SYMBOL HITS ===" > reference-analysis/symbol-hits.txt
+          grep -Rni -E 'WindowManager\.LayoutParams|TYPE_APPLICATION_OVERLAY|TYPE_PHONE|TYPE_SYSTEM_ALERT|FLAG_NOT_FOCUSABLE|FLAG_NOT_TOUCH_MODAL|FLAG_LAYOUT_IN_SCREEN|FLAG_ALT_FOCUSABLE_IM|onTouchEvent|setOnTouchListener|ACTION_DOWN|ACTION_MOVE|ACTION_UP|ACTION_CANCEL|VelocityTracker|GestureDetector|OVERLAY|BUBBLE|FLOAT|SERVICE|NOTIFICATION|Spring|spring|fling|translationX|translationY|x|y' "$source_root" >> reference-analysis/symbol-hits.txt || true
+
+          echo "=== ALL SERVICE / MANAGER / CHATHEAD NAMES ===" > reference-analysis/component-hints.txt
+          find "$source_root" -type f -name '*.java' | grep -Ei '(service|manager|chat|head|bubble|floating|overlay|browser|tab|webview|gesture|drag|spring|touch|notification)' | sort >> reference-analysis/component-hints.txt || true
+
+          echo "=== SOURCE ROOTS ===" > reference-analysis/source-roots.txt
+          find "$RUNNER_TEMP" -type d \( -name sources -o -name decompiled-dex -o -name decompiled-apk \) | sort >> reference-analysis/source-roots.txt
+
+      - name: Commit analysis report
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add reference-analysis
+          git add reference-analysis-jadx-version.txt
+          if git diff --cached --quiet; then
+            echo "No report changes."
+            exit 0
+          fi
+
+          git commit -m "Rebuild reference APK decompile analysis"
+          git push
+ reference-analysis/dex-index.txt || true)"
+          echo "DEX_COUNT=$dex_count" >> reference-analysis/dex-index.txt
+
+          : > reference-analysis/dex-files-stat.txt
+          if test "$dex_count" -gt 0; then
+            while IFS= read -r dex_name; do
             base="$(basename "$dex_name")"
             unzip -p "$apk" "$dex_name" > "$RUNNER_TEMP/dex-inputs/$base"
             test -s "$RUNNER_TEMP/dex-inputs/$base"
