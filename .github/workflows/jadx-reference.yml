@@ -81,7 +81,7 @@ jobs:
             echo "FILE: $file" >> reference-analysis/targeted-source.txt
             echo "================================================================" >> reference-analysis/targeted-source.txt
             cat "$file" >> reference-analysis/targeted-source.txt
-          done < reference-analysis/targeted-class-index.txt
+          done
 
           echo "=== RELEVANT RESOURCE STRINGS ===" > reference-analysis/relevant-resources.txt
           values_dir="$(find "$resource_dir" -type d -name values -print -quit)"
