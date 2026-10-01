@@ -1,6 +1,5 @@
 package com.aldiandrew.halobrowser
 
-import android.animation.ValueAnimator
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,7 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.content.pm.ServiceInfo
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -19,21 +18,15 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.EditText
 import android.widget.FrameLayout
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.unit.dp
+import android.widget.ImageButton
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import kotlin.math.abs
 import kotlin.math.max
@@ -47,7 +40,13 @@ class FloatingBubbleService : Service() {
     private var nextId = 1
     private var activeId = TAB_ID
     private var expanded = false
+
+    private var browserRoot: FrameLayout? = null
+    private var browserParams: WindowManager.LayoutParams? = null
     private var closeTarget: View? = null
+    private var addressField: EditText? = null
+    private var titleView: TextView? = null
+    private var activeWebView: WebView? = null
 
     private val binder = LocalBinder()
 
@@ -57,13 +56,14 @@ class FloatingBubbleService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+
         wm = getSystemService(WindowManager::class.java)
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
 
         nextId = prefs.getInt(KEY_NEXT_ID, 1)
         restoreTabs()
+
         bubbles.values.forEach { createBubbleView(it) }
-        ensureManager()
         ensureFirstTab()
         createNotificationChannel()
     }
@@ -85,14 +85,18 @@ class FloatingBubbleService : Service() {
         when (intent?.action) {
             ACTION_ADD_BUBBLE -> {
                 addTab(
-                    intent.getStringExtra(EXTRA_URL) ?: DEFAULT_URL,
+                    intent.getStringExtra(EXTRA_URL)
+                        ?: DEFAULT_URL,
                     open = true
                 )
             }
 
             ACTION_OPEN_BUBBLE -> {
                 openBubble(
-                    intent.getIntExtra(EXTRA_BUBBLE_ID, TAB_ID)
+                    intent.getIntExtra(
+                        EXTRA_BUBBLE_ID,
+                        TAB_ID
+                    )
                 )
             }
         }
@@ -101,17 +105,37 @@ class FloatingBubbleService : Service() {
     }
 
     override fun onDestroy() {
-        closeAll()
+        closeBrowserWindow()
+        hideCloseTarget()
+
+        bubbles.values.toList().forEach { bubble ->
+            bubble.webView?.stopLoading()
+            bubble.webView?.destroy()
+            bubble.view?.let {
+                try {
+                    wm.removeView(it)
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        bubbles.clear()
         super.onDestroy()
     }
 
     fun maximize() {
+        if (activeId == MANAGER_ID) {
+            activeId = bubbles.keys.firstOrNull { it != MANAGER_ID }
+                ?: TAB_ID
+        }
+
         expanded = true
-        arrangeBubbles()
+        showBrowserWindow(activeId)
     }
 
     fun minimize() {
         expanded = false
+        closeBrowserWindow()
         arrangeBubbles()
     }
 
@@ -120,9 +144,10 @@ class FloatingBubbleService : Service() {
         open: Boolean
     ): Int {
         val id = nextId++
+
         val state = BubbleState(
             id = id,
-            url = url.ifBlank { DEFAULT_URL },
+            url = url.ifBlank { NEW_TAB_URL },
             kind = BubbleKind.TAB
         )
 
@@ -132,8 +157,7 @@ class FloatingBubbleService : Service() {
 
         if (open) {
             activeId = id
-            maximize()
-            launchFloatingActivity(id)
+            showBrowserWindow(id)
         } else {
             arrangeBubbles()
         }
@@ -143,15 +167,24 @@ class FloatingBubbleService : Service() {
 
     fun openBubble(id: Int) {
         val bubble = bubbles[id] ?: return
+
         activeId = bubble.id
-        maximize()
-        launchFloatingActivity(bubble.id)
+        expanded = true
+        showBrowserWindow(bubble.id)
     }
 
     fun closeTab(id: Int) {
         if (id == MANAGER_ID) return
 
         val bubble = bubbles.remove(id) ?: return
+
+        if (activeId == id) {
+            closeBrowserWindow()
+            expanded = false
+        }
+
+        bubble.webView?.stopLoading()
+        bubble.webView?.destroy()
 
         bubble.view?.let {
             try {
@@ -160,16 +193,15 @@ class FloatingBubbleService : Service() {
             }
         }
 
-        if (activeId == id) {
-            activeId = bubbles.keys.firstOrNull { it != MANAGER_ID }
-                ?: MANAGER_ID
-        }
-
         persistTabs()
 
         if (bubbles.keys.none { it != MANAGER_ID }) {
-            addTab(DEFAULT_URL, open = false)
+            addTab(NEW_TAB_URL, open = false)
         }
+
+        activeId =
+            bubbles.keys.firstOrNull { it != MANAGER_ID }
+                ?: TAB_ID
 
         arrangeBubbles()
     }
@@ -193,119 +225,125 @@ class FloatingBubbleService : Service() {
         persistTabs()
     }
 
-    private fun ensureManager() {
-        if (bubbles[MANAGER_ID] != null) return
-
-        val state = BubbleState(
-            id = MANAGER_ID,
-            url = "about:manager",
-            kind = BubbleKind.MANAGER
-        )
-        bubbles[MANAGER_ID] = state
-        createBubbleView(state)
-    }
-
     private fun ensureFirstTab() {
-        if (bubbles.keys.any { it != MANAGER_ID }) return
-        addTab(DEFAULT_URL, open = false)
+        if (bubbles.keys.any { it != MANAGER_ID }) {
+            return
+        }
+
+        addTab(
+            NEW_TAB_URL,
+            open = false
+        )
     }
 
     private fun restoreTabs() {
-        val ids = prefs
-            .getStringSet(KEY_TAB_IDS, emptySet())
-            ?: emptySet()
+        val ids =
+            prefs.getStringSet(
+                KEY_TAB_IDS,
+                emptySet()
+            ) ?: emptySet()
 
         ids.mapNotNull { it.toIntOrNull() }
             .sorted()
             .forEach { id ->
                 val url =
-                    prefs.getString("url_" + id, DEFAULT_URL)
-                        ?: DEFAULT_URL
+                    prefs.getString(
+                        "url_" + id,
+                        NEW_TAB_URL
+                    ) ?: NEW_TAB_URL
 
-                bubbles[id] = BubbleState(
-                    id = id,
-                    url = url,
-                    kind = BubbleKind.TAB
+                bubbles[id] =
+                    BubbleState(
+                        id = id,
+                        url = url,
+                        kind = BubbleKind.TAB
+                    )
+
+                nextId = max(
+                    nextId,
+                    id + 1
                 )
-
-                nextId = max(nextId, id + 1)
             }
     }
 
     private fun persistTabs() {
-        val ids = bubbles.values
-            .filter { it.kind == BubbleKind.TAB }
-            .map { it.id.toString() }
-            .toSet()
+        val ids =
+            bubbles.values
+                .filter {
+                    it.kind == BubbleKind.TAB
+                }
+                .map {
+                    it.id.toString()
+                }
+                .toSet()
 
-        val editor = prefs.edit()
-            .putStringSet(KEY_TAB_IDS, ids)
-            .putInt(KEY_NEXT_ID, nextId)
+        val editor =
+            prefs.edit()
+                .putStringSet(
+                    KEY_TAB_IDS,
+                    ids
+                )
+                .putInt(
+                    KEY_NEXT_ID,
+                    nextId
+                )
 
         bubbles.values
-            .filter { it.kind == BubbleKind.TAB }
+            .filter {
+                it.kind == BubbleKind.TAB
+            }
             .forEach {
-                editor.putString("url_" + it.id, it.url)
+                editor.putString(
+                    "url_" + it.id,
+                    it.url
+                )
             }
 
         editor.apply()
     }
 
-    private fun createBubbleView(bubble: BubbleState) {
-        if (bubble.view != null) return
-
-        val size = dp(68)
-
-        val root = FrameLayout(this).apply {
-            contentDescription =
-                if (bubble.kind == BubbleKind.MANAGER) {
-                    "Halo Browser manager"
-                } else {
-                    "Halo Browser tab " + bubble.id
-                }
+    private fun createBubbleView(
+        bubble: BubbleState
+    ) {
+        if (bubble.view != null) {
+            return
         }
 
-        val compose = ComposeView(this).apply {
-            isClickable = false
-            isFocusable = false
+        val size = dp(64)
 
-            setContent {
-                HaloExpressiveTheme {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(CircleShape)
-                            .background(
-                                if (bubble.kind == BubbleKind.MANAGER) {
-                                    MaterialTheme.colorScheme.tertiaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.primaryContainer
-                                }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector =
-                                if (bubble.kind == BubbleKind.MANAGER) {
-                                    Icons.Filled.GridView
-                                } else {
-                                    Icons.Filled.Language
-                                },
-                            contentDescription = null,
-                            tint =
-                                if (bubble.kind == BubbleKind.MANAGER) {
-                                    MaterialTheme.colorScheme.onTertiaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                }
+        val root =
+            FrameLayout(this).apply {
+                contentDescription =
+                    "Halo Browser tab " + bubble.id
+
+                background =
+                    GradientDrawable().apply {
+                        shape =
+                            GradientDrawable.OVAL
+                        setColor(
+                            0xFFF1EFFF.toInt()
+                        )
+                        setStroke(
+                            dp(2),
+                            0xFF6650A4.toInt()
                         )
                     }
-                }
+
+                elevation = dp(8).toFloat()
             }
-        }
+
+        val icon =
+            TextView(this).apply {
+                text = "●"
+                textSize = 25f
+                setTextColor(
+                    0xFF6650A4.toInt()
+                )
+                gravity = Gravity.CENTER
+            }
 
         root.addView(
-            compose,
+            icon,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -313,18 +351,31 @@ class FloatingBubbleService : Service() {
         )
 
         bubble.view = root
-        bubble.params = overlayParams(size, size).apply {
-            gravity = Gravity.TOP or Gravity.START
-        }
+
+        bubble.params =
+            overlayParams(
+                size,
+                size,
+                focusable = false
+            ).apply {
+                gravity =
+                    Gravity.TOP or Gravity.START
+            }
 
         root.setOnTouchListener(
-            makeDragListener(bubble, size)
+            makeBubbleDragListener(
+                bubble,
+                size
+            )
         )
 
-        wm.addView(root, bubble.params!!)
+        wm.addView(
+            root,
+            bubble.params
+        )
     }
 
-    private fun makeDragListener(
+    private fun makeBubbleDragListener(
         bubble: BubbleState,
         size: Int
     ): View.OnTouchListener {
@@ -339,29 +390,48 @@ class FloatingBubbleService : Service() {
                 MotionEvent.ACTION_DOWN -> {
                     startRawX = event.rawX
                     startRawY = event.rawY
-                    startX = bubble.params?.x ?: 0
-                    startY = bubble.params?.y ?: 0
+                    startX =
+                        bubble.params?.x ?: 0
+                    startY =
+                        bubble.params?.y ?: 0
                     moved = false
                     showCloseTarget()
                     true
                 }
 
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - startRawX).toInt()
-                    val dy = (event.rawY - startRawY).toInt()
+                    val dx =
+                        (event.rawX - startRawX)
+                            .toInt()
+                    val dy =
+                        (event.rawY - startRawY)
+                            .toInt()
 
-                    if (abs(dx) > dp(6) || abs(dy) > dp(6)) {
+                    if (
+                        abs(dx) > dp(6) ||
+                        abs(dy) > dp(6)
+                    ) {
                         moved = true
                     }
 
                     bubble.params?.let { params ->
-                        params.x = startX + dx
-                        params.y = startY + dy
-                        clamp(params, size)
-                        wm.updateViewLayout(
-                            bubble.view!!,
-                            params
+                        params.x =
+                            startX + dx
+                        params.y =
+                            startY + dy
+
+                        clamp(
+                            params,
+                            size
                         )
+
+                        try {
+                            wm.updateViewLayout(
+                                bubble.view!!,
+                                params
+                            )
+                        } catch (_: Exception) {
+                        }
                     }
 
                     true
@@ -370,18 +440,32 @@ class FloatingBubbleService : Service() {
                 MotionEvent.ACTION_UP,
                 MotionEvent.ACTION_CANCEL -> {
                     val overClose =
-                        isOverCloseTarget(event.rawX, event.rawY)
+                        isOverCloseTarget(
+                            event.rawX,
+                            event.rawY
+                        )
 
                     hideCloseTarget()
 
                     when {
-                        !moved -> openBubble(bubble.id)
+                        !moved -> {
+                            openBubble(
+                                bubble.id
+                            )
+                        }
 
-                        overClose && bubble.kind == BubbleKind.TAB ->
-                            closeTab(bubble.id)
+                        overClose -> {
+                            closeTab(
+                                bubble.id
+                            )
+                        }
 
-                        else ->
-                            snapSingle(bubble, size)
+                        else -> {
+                            snapSingle(
+                                bubble,
+                                size
+                            )
+                        }
                     }
 
                     true
@@ -392,41 +476,632 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    private fun arrangeBubbles() {
-        if (bubbles.isEmpty()) return
+    private fun showBrowserWindow(
+        id: Int
+    ) {
+        val bubble =
+            bubbles[id] ?: return
 
-        val size = dp(68)
-        val gap = dp(12)
-        val all = bubbles.values.toList()
+        closeBrowserWindow()
 
-        if (expanded) {
-            val totalWidth =
-                all.size * size +
-                    max(0, all.size - 1) * gap
+        activeId = id
 
-            val startX =
-                max(
+        val root =
+            FrameLayout(this).apply {
+                background =
+                    roundedBackground(
+                        0xFFFDFBFF.toInt(),
+                        dp(24)
+                    )
+                elevation = dp(18).toFloat()
+            }
+
+        val header =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+                gravity =
+                    Gravity.CENTER_VERTICAL
+                setPadding(
                     dp(10),
-                    (screenWidth() - totalWidth) / 2
+                    dp(8),
+                    dp(8),
+                    dp(8)
+                )
+                background =
+                    roundedBackground(
+                        0xFFF1EFFF.toInt(),
+                        dp(24)
+                    )
+            }
+
+        val title =
+            TextView(this).apply {
+                text =
+                    "Halo Browser"
+                textSize = 15f
+                setTextColor(
+                    0xFF26242A.toInt()
+                )
+                maxLines = 1
+                ellipsize =
+                    android.text.TextUtils.TruncateAt.END
+                gravity =
+                    Gravity.CENTER_VERTICAL
+                layoutParams =
+                    LinearLayout.LayoutParams(
+                        0,
+                        dp(44),
+                        1f
+                    )
+            }
+
+        titleView = title
+
+        val minimize =
+            createHeaderButton(
+                "−"
+            )
+
+        val newTab =
+            createHeaderButton(
+                "+"
+            )
+
+        val close =
+            createHeaderButton(
+                "×"
+            )
+
+        header.addView(title)
+
+        header.addView(
+            newTab,
+            LinearLayout.LayoutParams(
+                dp(42),
+                dp(42)
+            )
+        )
+
+        header.addView(
+            minimize,
+            LinearLayout.LayoutParams(
+                dp(42),
+                dp(42)
+            )
+        )
+
+        header.addView(
+            close,
+            LinearLayout.LayoutParams(
+                dp(42),
+                dp(42)
+            )
+        )
+
+        root.addView(
+            header,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(58)
+            ).apply {
+                gravity = Gravity.TOP
+            }
+        )
+
+        val address =
+            EditText(this).apply {
+                singleLine = true
+                textSize = 14f
+                setText(
+                    if (
+                        bubble.url == NEW_TAB_URL
+                    ) {
+                        ""
+                    } else {
+                        bubble.url
+                    }
+                )
+                hint =
+                    "Search or enter URL"
+                setPadding(
+                    dp(16),
+                    0,
+                    dp(16),
+                    0
+                )
+                background =
+                    roundedBackground(
+                        0xFFF1EFFF.toInt(),
+                        dp(18)
+                    )
+                layoutParams =
+                    FrameLayout.LayoutParams(
+                        0,
+                        dp(46)
+                    ).apply {
+                        leftMargin = dp(10)
+                        rightMargin = dp(10)
+                        topMargin = dp(66)
+                    }
+            }
+
+        addressField = address
+        root.addView(address)
+
+        val web =
+            getOrCreateWebView(
+                bubble
+            )
+
+        activeWebView = web
+
+        val webParams =
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                0
+            ).apply {
+                leftMargin = dp(8)
+                rightMargin = dp(8)
+                topMargin = dp(120)
+                bottomMargin = dp(10)
+                height = 0
+                weight = 1f
+            }
+
+        root.addView(
+            web,
+            webParams
+        )
+
+        val resize =
+            TextView(this).apply {
+                text = "⌟"
+                textSize = 24f
+                gravity = Gravity.CENTER
+                setTextColor(
+                    0xFF6650A4.toInt()
+                )
+                background =
+                    roundedBackground(
+                        0x22FFFFFF,
+                        dp(12)
+                    )
+            }
+
+        root.addView(
+            resize,
+            FrameLayout.LayoutParams(
+                dp(42),
+                dp(42)
+            ).apply {
+                gravity =
+                    Gravity.BOTTOM or
+                        Gravity.END
+                rightMargin = dp(6)
+                bottomMargin = dp(6)
+            }
+        )
+
+        newTab.setOnClickListener {
+            addTab(
+                NEW_TAB_URL,
+                open = true
+            )
+        }
+
+        minimize.setOnClickListener {
+            minimize()
+        }
+
+        close.setOnClickListener {
+            closeTab(id)
+        }
+
+        address.setOnEditorActionListener { _, _, _ ->
+            navigate(
+                bubble,
+                address.text.toString()
+            )
+            true
+        }
+
+        header.setOnTouchListener(
+            makeWindowDragListener(
+                root
+            )
+        )
+
+        resize.setOnTouchListener(
+            makeResizeListener(
+                root
+            )
+        )
+
+        web.webViewClient =
+            object : WebViewClient() {
+                override fun onPageFinished(
+                    view: WebView,
+                    url: String
+                ) {
+                    super.onPageFinished(
+                        view,
+                        url
+                    )
+
+                    bubble.url =
+                        if (
+                            url.isBlank()
+                        ) {
+                            NEW_TAB_URL
+                        } else {
+                            url
+                        }
+
+                    if (
+                        addressField === address
+                    ) {
+                        address.setText(
+                            if (
+                                bubble.url ==
+                                NEW_TAB_URL
+                            ) {
+                                ""
+                            } else {
+                                bubble.url
+                            }
+                        )
+                        address.setSelection(
+                            address.text.length
+                        )
+                    }
+
+                    title.text =
+                        view.title?.takeIf {
+                            it.isNotBlank()
+                        } ?: "Halo Browser"
+
+                    persistTabs()
+                }
+
+                override fun shouldOverrideUrlLoading(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): Boolean {
+                    return false
+                }
+            }
+
+        val width =
+            (screenWidth() * 0.92f)
+                .toInt()
+                .coerceAtLeast(
+                    dp(280)
                 )
 
-            val y = dp(72)
+        val height =
+            (screenHeight() * 0.70f)
+                .toInt()
+                .coerceAtLeast(
+                    dp(360)
+                )
 
-            all.forEachIndexed { index, bubble ->
-                animateBubbleTo(
-                    bubble,
-                    startX + index * (size + gap),
-                    y
+        val params =
+            overlayParams(
+                width,
+                height,
+                focusable = true
+            ).apply {
+                gravity =
+                    Gravity.TOP or
+                        Gravity.START
+                x =
+                    (screenWidth() - width) / 2
+                y =
+                    dp(100)
+            }
+
+        browserRoot = root
+        browserParams = params
+
+        wm.addView(
+            root,
+            params
+        )
+
+        expanded = true
+
+        if (
+            bubble.url != NEW_TAB_URL &&
+            bubble.url.isNotBlank()
+        ) {
+            if (
+                web.url != bubble.url
+            ) {
+                web.loadUrl(
+                    bubble.url
                 )
             }
         } else {
-            all.forEachIndexed { index, bubble ->
-                animateBubbleTo(
-                    bubble,
-                    screenWidth() - size - dp(12),
-                    dp(260) + index * dp(76)
+            showNewTabPage(web)
+        }
+    }
+
+    private fun getOrCreateWebView(
+        bubble: BubbleState
+    ): WebView {
+        bubble.webView?.let {
+            return it
+        }
+
+        val web =
+            WebView(this).apply {
+                setBackgroundColor(
+                    Color.WHITE
                 )
+
+                settings.javaScriptEnabled =
+                    true
+                settings.domStorageEnabled =
+                    true
+                settings.loadsImagesAutomatically =
+                    true
+                settings.allowFileAccess =
+                    false
+                settings.allowContentAccess =
+                    false
+                settings.setSupportZoom(
+                    true
+                )
+                settings.builtInZoomControls =
+                    false
+                settings.displayZoomControls =
+                    false
+                settings.javaScriptCanOpenWindowsAutomatically =
+                    true
+                settings.mediaPlaybackRequiresUserGesture =
+                    false
+                webChromeClient =
+                    WebChromeClient()
             }
+
+        bubble.webView = web
+        return web
+    }
+
+    private fun showNewTabPage(
+        web: WebView
+    ) {
+        val html =
+            """
+            <!doctype html>
+            <html>
+            <head>
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <style>
+            body{font-family:sans-serif;background:#fdfbff;color:#26242a;margin:0;padding:32px;text-align:center}
+            h1{font-size:28px;margin-top:55px}
+            p{color:#6f6a75}
+            </style>
+            </head>
+            <body>
+            <h1>Halo Browser</h1>
+            <p>New tab</p>
+            </body>
+            </html>
+            """.trimIndent()
+
+        web.loadDataWithBaseURL(
+            "https://halo.local/",
+            html,
+            "text/html",
+            "UTF-8",
+            null
+        )
+    }
+
+    private fun navigate(
+        bubble: BubbleState,
+        value: String
+    ) {
+        val target =
+            normalizeUrl(
+                value
+            )
+
+        bubble.url = target
+        persistTabs()
+
+        activeWebView?.loadUrl(
+            target
+        )
+    }
+
+    private fun makeWindowDragListener(
+        root: View
+    ): View.OnTouchListener {
+        var downX = 0f
+        var downY = 0f
+        var startX = 0
+        var startY = 0
+        var moved = false
+
+        return View.OnTouchListener { _, event ->
+            val params =
+                browserParams
+                    ?: return@OnTouchListener false
+
+            when (
+                event.actionMasked
+            ) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX
+                    downY = event.rawY
+                    startX = params.x
+                    startY = params.y
+                    moved = false
+                    true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    val dx =
+                        (event.rawX - downX)
+                            .toInt()
+                    val dy =
+                        (event.rawY - downY)
+                            .toInt()
+
+                    if (
+                        abs(dx) > dp(4) ||
+                        abs(dy) > dp(4)
+                    ) {
+                        moved = true
+                    }
+
+                    params.x =
+                        startX + dx
+                    params.y =
+                        startY + dy
+
+                    clampWindow(
+                        params
+                    )
+
+                    try {
+                        wm.updateViewLayout(
+                            root,
+                            params
+                        )
+                    } catch (_: Exception) {
+                    }
+
+                    true
+                }
+
+                MotionEvent.ACTION_UP -> moved
+
+                else -> true
+            }
+        }
+    }
+
+    private fun makeResizeListener(
+        root: View
+    ): View.OnTouchListener {
+        var downX = 0f
+        var downY = 0f
+        var startWidth = 0
+        var startHeight = 0
+
+        return View.OnTouchListener { _, event ->
+            val params =
+                browserParams
+                    ?: return@OnTouchListener false
+
+            when (
+                event.actionMasked
+            ) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX
+                    downY = event.rawY
+                    startWidth = params.width
+                    startHeight = params.height
+                    true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    params.width =
+                        (
+                            startWidth +
+                                event.rawX -
+                                downX
+                            ).toInt().coerceIn(
+                                dp(280),
+                                screenWidth() -
+                                    dp(16)
+                            )
+
+                    params.height =
+                        (
+                            startHeight +
+                                event.rawY -
+                                downY
+                            ).toInt().coerceIn(
+                                dp(360),
+                                screenHeight() -
+                                    dp(24)
+                            )
+
+                    try {
+                        wm.updateViewLayout(
+                            root,
+                            params
+                        )
+                    } catch (_: Exception) {
+                    }
+
+                    true
+                }
+
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL -> true
+
+                else -> true
+            }
+        }
+    }
+
+    private fun closeBrowserWindow() {
+        browserRoot?.let {
+            try {
+                wm.removeView(it)
+            } catch (_: Exception) {
+            }
+        }
+
+        browserRoot = null
+        browserParams = null
+        addressField = null
+        titleView = null
+        activeWebView = null
+    }
+
+    private fun arrangeBubbles() {
+        val tabs =
+            bubbles.values
+                .filter {
+                    it.kind == BubbleKind.TAB
+                }
+
+        if (tabs.isEmpty()) {
+            return
+        }
+
+        val size = dp(64)
+        val gap = dp(10)
+
+        tabs.forEachIndexed { index, bubble ->
+            val x =
+                if (
+                    index % 2 == 0
+                ) {
+                    screenWidth() -
+                        size -
+                        dp(10)
+                } else {
+                    dp(10)
+                }
+
+            val y =
+                dp(150) +
+                    (index / 2) *
+                    (size + gap)
+
+            animateBubbleTo(
+                bubble,
+                x,
+                y
+            )
         }
     }
 
@@ -435,31 +1110,19 @@ class FloatingBubbleService : Service() {
         x: Int,
         y: Int
     ) {
-        val params = bubble.params ?: return
-        val fromX = params.x
-        val fromY = params.y
+        val params =
+            bubble.params
+                ?: return
 
-        ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 260L
-            interpolator =
-                android.view.animation.OvershootInterpolator(1.1f)
+        params.x = x
+        params.y = y
 
-            addUpdateListener {
-                val t = it.animatedValue as Float
-                params.x =
-                    (fromX + (x - fromX) * t).toInt()
-                params.y =
-                    (fromY + (y - fromY) * t).toInt()
-
-                try {
-                    wm.updateViewLayout(
-                        bubble.view!!,
-                        params
-                    )
-                } catch (_: Exception) {
-                }
-            }
-            start()
+        try {
+            wm.updateViewLayout(
+                bubble.view!!,
+                params
+            )
+        } catch (_: Exception) {
         }
     }
 
@@ -467,69 +1130,78 @@ class FloatingBubbleService : Service() {
         bubble: BubbleState,
         size: Int
     ) {
-        val params = bubble.params ?: return
+        val params =
+            bubble.params
+                ?: return
 
         params.x =
-            if (params.x + size / 2 < screenWidth() / 2) {
+            if (
+                params.x +
+                    size / 2 <
+                screenWidth() / 2
+            ) {
                 dp(6)
             } else {
-                screenWidth() - size - dp(6)
+                screenWidth() -
+                    size -
+                    dp(6)
             }
 
-        clamp(params, size)
-        wm.updateViewLayout(
-            bubble.view,
-            params
+        clamp(
+            params,
+            size
         )
-    }
 
-    private fun launchFloatingActivity(id: Int) {
-        val intent = Intent(
-            this,
-            FloatingActivity::class.java
-        ).apply {
-            addFlags(
-                Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+        try {
+            wm.updateViewLayout(
+                bubble.view!!,
+                params
             )
-            putExtra(
-                EXTRA_BUBBLE_ID,
-                id
-            )
-            putExtra(
-                EXTRA_URL,
-                bubbles[id]?.url ?: DEFAULT_URL
-            )
+        } catch (_: Exception) {
         }
-
-        startActivity(intent)
     }
 
     private fun showCloseTarget() {
-        if (closeTarget != null) return
+        if (closeTarget != null) {
+            return
+        }
 
-        val size = dp(76)
+        val size = dp(72)
 
-        val target = FrameLayout(this).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0x33000000)
-                setStroke(
-                    dp(2),
-                    0xFFE1E7F0.toInt()
-                )
+        val target =
+            FrameLayout(this).apply {
+                background =
+                    GradientDrawable().apply {
+                        shape =
+                            GradientDrawable.OVAL
+                        setColor(
+                            0xFF3A3540.toInt()
+                        )
+                        setStroke(
+                            dp(2),
+                            0xFFFFFFFF.toInt()
+                        )
+                    }
             }
-        }
 
-        val params = overlayParams(size, size).apply {
-            gravity =
-                Gravity.BOTTOM or
-                    Gravity.CENTER_HORIZONTAL
-            y = dp(20)
-        }
+        val params =
+            overlayParams(
+                size,
+                size,
+                focusable = false
+            ).apply {
+                gravity =
+                    Gravity.BOTTOM or
+                        Gravity.CENTER_HORIZONTAL
+                y = dp(28)
+            }
 
         closeTarget = target
-        wm.addView(target, params)
+
+        wm.addView(
+            target,
+            params
+        )
     }
 
     private fun hideCloseTarget() {
@@ -539,6 +1211,7 @@ class FloatingBubbleService : Service() {
             } catch (_: Exception) {
             }
         }
+
         closeTarget = null
     }
 
@@ -546,35 +1219,42 @@ class FloatingBubbleService : Service() {
         x: Float,
         y: Float
     ): Boolean {
-        val target = closeTarget ?: return false
-        val location = IntArray(2)
-        target.getLocationOnScreen(location)
+        val target =
+            closeTarget
+                ?: return false
+
+        val location =
+            IntArray(2)
+
+        target.getLocationOnScreen(
+            location
+        )
 
         val centerX =
-            location[0] + target.width / 2f
+            location[0] +
+                target.width / 2f
+
         val centerY =
-            location[1] + target.height / 2f
+            location[1] +
+                target.height / 2f
 
         val radius =
-            max(target.width, target.height) / 2f +
+            max(
+                target.width,
+                target.height
+            ) / 2f +
                 dp(18)
 
-        val dx = x - centerX
-        val dy = y - centerY
+        val dx =
+            x - centerX
 
-        return dx * dx + dy * dy <= radius * radius
+        val dy =
+            y - centerY
+
+        return dx * dx +
+            dy * dy <=
+            radius * radius
     }
-
-    private fun overlayParams(
-        width: Int,
-        height: Int
-    ) = WindowManager.LayoutParams(
-        width,
-        height,
-        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-        PixelFormat.TRANSLUCENT
-    )
 
     private fun clamp(
         params: WindowManager.LayoutParams,
@@ -583,7 +1263,10 @@ class FloatingBubbleService : Service() {
         params.x =
             params.x.coerceIn(
                 0,
-                max(0, screenWidth() - size)
+                max(
+                    0,
+                    screenWidth() - size
+                )
             )
 
         params.y =
@@ -591,24 +1274,109 @@ class FloatingBubbleService : Service() {
                 dp(8),
                 max(
                     dp(8),
-                    screenHeight() - size - dp(8)
+                    screenHeight() -
+                        size -
+                        dp(8)
                 )
             )
     }
 
-    private fun createNotificationChannel() {
-        getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "Halo Browser Floating Service",
-                    NotificationManager.IMPORTANCE_LOW
-                ).apply {
-                    description =
-                        "Keeps Halo Browser chat heads available"
-                    setShowBadge(false)
-                }
+    private fun clampWindow(
+        params: WindowManager.LayoutParams
+    ) {
+        params.x =
+            params.x.coerceIn(
+                0,
+                max(
+                    0,
+                    screenWidth() -
+                        params.width
+                )
             )
+
+        params.y =
+            params.y.coerceIn(
+                dp(8),
+                max(
+                    dp(8),
+                    screenHeight() -
+                        params.height
+                )
+            )
+    }
+
+    private fun overlayParams(
+        width: Int,
+        height: Int,
+        focusable: Boolean
+    ) =
+        WindowManager.LayoutParams(
+            width,
+            height,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            if (focusable) {
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+            } else {
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            },
+            PixelFormat.TRANSLUCENT
+        )
+
+    private fun createHeaderButton(
+        text: String
+    ): TextView =
+        TextView(this).apply {
+            this.text = text
+            textSize = 23f
+            gravity = Gravity.CENTER
+            setTextColor(
+                0xFF514C55.toInt()
+            )
+            background =
+                roundedBackground(
+                    0x00FFFFFF,
+                    dp(21)
+                )
+            isClickable = true
+        }
+
+    private fun roundedBackground(
+        color: Int,
+        radius: Int
+    ) =
+        GradientDrawable().apply {
+            setColor(color)
+            cornerRadius =
+                radius.toFloat()
+        }
+
+    private fun screenWidth(): Int =
+        resources.displayMetrics.widthPixels
+
+    private fun screenHeight(): Int =
+        resources.displayMetrics.heightPixels
+
+    private fun dp(value: Int): Int =
+        (
+            value *
+                resources.displayMetrics.density
+        ).toInt()
+
+    private fun createNotificationChannel() {
+        getSystemService(
+            NotificationManager::class.java
+        ).createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_ID,
+                "Halo Browser Floating Service",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description =
+                    "Keeps Halo Browser bubbles available"
+                setShowBadge(false)
+            }
+        )
     }
 
     private fun startAsForeground() {
@@ -616,7 +1384,10 @@ class FloatingBubbleService : Service() {
             PendingIntent.getActivity(
                 this,
                 100,
-                Intent(this, MainActivity::class.java),
+                Intent(
+                    this,
+                    MainActivity::class.java
+                ),
                 PendingIntent.FLAG_UPDATE_CURRENT or
                     PendingIntent.FLAG_IMMUTABLE
             )
@@ -626,12 +1397,18 @@ class FloatingBubbleService : Service() {
                 this,
                 CHANNEL_ID
             )
-                .setSmallIcon(R.drawable.ic_halo_browser)
-                .setContentTitle("Halo Browser")
+                .setSmallIcon(
+                    R.drawable.ic_halo_browser
+                )
+                .setContentTitle(
+                    "Halo Browser"
+                )
                 .setContentText(
                     "Floating browser is active"
                 )
-                .setContentIntent(pendingIntent)
+                .setContentIntent(
+                    pendingIntent
+                )
                 .setOngoing(true)
                 .setSilent(true)
                 .setCategory(
@@ -643,7 +1420,8 @@ class FloatingBubbleService : Service() {
             startForeground(
                 FOREGROUND_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                android.content.pm.ServiceInfo
+                    .FOREGROUND_SERVICE_TYPE_SPECIAL_USE
             )
         } else {
             startForeground(
@@ -653,42 +1431,51 @@ class FloatingBubbleService : Service() {
         }
     }
 
-    private fun closeAll() {
-        hideCloseTarget()
+    private fun normalizeUrl(
+        value: String
+    ): String {
+        val input =
+            value.trim()
 
-        val all = bubbles.values.toList()
-        bubbles.clear()
-
-        all.forEach { bubble ->
-            bubble.view?.let {
-                try {
-                    wm.removeView(it)
-                } catch (_: Exception) {
-                }
-            }
+        if (input.isEmpty()) {
+            return NEW_TAB_URL
         }
+
+        if (
+            input.startsWith(
+                "http://"
+            ) ||
+            input.startsWith(
+                "https://"
+            )
+        ) {
+            return input
+        }
+
+        if (
+            input.contains(" ") ||
+            !input.contains(".")
+        ) {
+            return "https://www.google.com/search?q=" +
+                android.net.Uri.encode(input)
+        }
+
+        return "https://" + input
     }
-
-    private fun screenWidth(): Int =
-        resources.displayMetrics.widthPixels
-
-    private fun screenHeight(): Int =
-        resources.displayMetrics.heightPixels
-
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).toInt()
 
     private data class BubbleState(
         val id: Int,
         var url: String,
         val kind: BubbleKind,
         var view: View? = null,
-        var params: WindowManager.LayoutParams? = null
+        var params:
+            WindowManager.LayoutParams? = null,
+        var webView: WebView? = null
     )
 
     private enum class BubbleKind {
-        MANAGER,
-        TAB
+        TAB,
+        MANAGER
     }
 
     data class BubbleInfo(
@@ -700,10 +1487,13 @@ class FloatingBubbleService : Service() {
     companion object {
         const val ACTION_ADD_BUBBLE =
             "com.aldiandrew.halobrowser.action.ADD_BUBBLE"
+
         const val ACTION_OPEN_BUBBLE =
             "com.aldiandrew.halobrowser.action.OPEN_BUBBLE"
 
-        const val EXTRA_URL = "halo_browser_url"
+        const val EXTRA_URL =
+            "halo_browser_url"
+
         const val EXTRA_BUBBLE_ID =
             "halo_browser_bubble_id"
 
@@ -713,15 +1503,21 @@ class FloatingBubbleService : Service() {
         private const val DEFAULT_URL =
             "https://www.google.com"
 
+        private const val NEW_TAB_URL =
+            "about:blank"
+
         private const val PREFS =
             "halo_bubbles"
+
         private const val KEY_TAB_IDS =
             "tab_ids"
+
         private const val KEY_NEXT_ID =
             "next_id"
 
         private const val CHANNEL_ID =
             "halo_floating_service"
+
         private const val FOREGROUND_ID = 901
     }
 }
