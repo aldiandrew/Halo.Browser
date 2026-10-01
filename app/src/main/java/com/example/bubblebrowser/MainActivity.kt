@@ -129,7 +129,7 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             Toast.makeText(
                 this,
-                "Gagal membuka Bubble Browser: \${e.message ?: "error tidak diketahui"}",
+                "Gagal membuka Bubble Browser: ${e.message ?: "error tidak diketahui"}",
                 Toast.LENGTH_LONG
             ).show()
         }
