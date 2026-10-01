@@ -4,11 +4,9 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.Context
 import android.content.Intent
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
-import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -32,7 +30,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,7 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.app.NotificationCompat.BubbleMetadata
+import androidx.core.graphics.drawable.IconCompat
 
 class MainActivity : ComponentActivity() {
 
@@ -132,9 +129,14 @@ class MainActivity : ComponentActivity() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val bubbleMetadata = BubbleMetadata.Builder(
+        val bubbleIcon = IconCompat.createWithResource(
+            this,
+            R.drawable.ic_halo_browser
+        )
+
+        val bubbleMetadata = NotificationCompat.BubbleMetadata.Builder(
             pendingIntent,
-            android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_halo_browser)
+            bubbleIcon
         )
             .setDesiredHeight(640)
             .setAutoExpandBubble(false)
