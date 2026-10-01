@@ -5,6 +5,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class DataManager(context: Context) {
+    companion object {
+        private const val HISTORY_LIMIT = 50
+    }
     private val prefs = context.getSharedPreferences("halo_data_manager", Context.MODE_PRIVATE)
 
     var searchEngine: String
@@ -38,13 +41,13 @@ class DataManager(context: Context) {
         }
         val result = JSONArray()
         result.put(entry)
-        for (i in 0 until minOf(array.length(), 199)) result.put(array.getJSONObject(i))
+        for (i in 0 until minOf(array.length(), HISTORY_LIMIT - 1)) result.put(array.getJSONObject(i))
         prefs.edit().putString("history", result.toString()).apply()
     }
 
     fun history(): List<Pair<String, String>> {
         val array = JSONArray(prefs.getString("history", "[]") ?: "[]")
-        return (0 until array.length()).map {
+        return (0 until minOf(array.length(), HISTORY_LIMIT)).map {
             val o = array.getJSONObject(it)
             o.optString("url") to o.optString("title")
         }
