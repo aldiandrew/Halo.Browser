@@ -45,6 +45,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
+    implementation("androidx.dynamicanimation:dynamicanimation:0.3")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
