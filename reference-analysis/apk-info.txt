@@ -1,10 +1,10 @@
 === APK FILE ===
   File: /home/runner/work/_temp/reference.apk
   Size: 7873232   	Blocks: 15384      IO Block: 4096   regular file
-Device: 259,1	Inode: 2422869     Links: 1
+Device: 8,1	Inode: 2422897     Links: 1
 Access: (0644/-rw-r--r--)  Uid: ( 1001/  runner)   Gid: ( 1001/  runner)
-Access: 2026-10-01 18:12:57.165437690 +0000
-Modify: 2026-10-01 18:12:52.714353545 +0000
-Change: 2026-10-01 18:12:52.714353545 +0000
- Birth: 2026-10-01 18:12:52.712353507 +0000
+Access: 2026-10-01 18:26:28.870476736 +0000
+Modify: 2026-10-01 18:26:28.872476727 +0000
+Change: 2026-10-01 18:26:28.872476727 +0000
+ Birth: 2026-10-01 18:26:28.870476736 +0000
 f13315fc6a9c04880650c380f06d45f353e0db89c2fa174d5cac0326115b3d93  /home/runner/work/_temp/reference.apk

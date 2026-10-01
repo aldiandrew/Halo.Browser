@@ -1,0 +1,10 @@
+=== ZIP TEST ===
+Archive:  /home/runner/work/_temp/reference.apk
+    testing: apk+.json                OK
+    testing: icon.png                 OK
+    testing: base.apk                 OK
+    testing: split_config.en.apk      OK
+    testing: split_config.in.apk      OK
+    testing: split_config.ms.apk      OK
+    testing: split_config.xxhdpi.apk   OK
+No errors detected in compressed data of /home/runner/work/_temp/reference.apk.
