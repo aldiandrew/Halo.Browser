@@ -138,11 +138,18 @@ class MainActivity : ComponentActivity() {
             putExtra(EXTRA_URL, url)
         }
 
+        val bubblePendingIntentFlags =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+
         val bubblePendingIntent = PendingIntent.getActivity(
             this,
             BUBBLE_REQUEST_CODE,
             bubbleIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            bubblePendingIntentFlags
         )
 
         val contentIntent = Intent(this, MainActivity::class.java).apply {
