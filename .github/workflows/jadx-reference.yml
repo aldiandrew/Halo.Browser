@@ -218,6 +218,59 @@ jobs:
 
           tail -n +2 reference-analysis/package-class-index.txt             | cut -d'|' -f1             | sed 's/[[:space:]]*$//'             | sort | uniq -c | sort -nr             >> reference-analysis/package-counts.txt || true
 
+
+
+      - name: Export reconstruction source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf reference-analysis/reconstruction
+          mkdir -p reference-analysis/reconstruction
+
+          copy_tree() {
+            local root="$1"
+            local dest_root="$2"
+
+            test -d "$root" || return 0
+
+            while IFS= read -r -d '' file; do
+              rel="${file#"$root"/}"
+              dest="$dest_root/$rel"
+              mkdir -p "$(dirname "$dest")"
+              cp "$file" "$dest"
+            done < <(find "$root" -type f -name '*.java' -print0 | sort -z)
+          }
+
+          copy_tree "$RUNNER_TEMP/decompiled-dex/classes/sources/com/bubble/browser/pro"             reference-analysis/reconstruction/classes1/com/bubble/browser/pro
+          copy_tree "$RUNNER_TEMP/decompiled-dex/classes2/sources/com/bubble/browser/pro"             reference-analysis/reconstruction/classes2/com/bubble/browser/pro
+
+          copy_tree "$RUNNER_TEMP/decompiled-dex/classes/sources/com/flipkart/chatheads/ui"             reference-analysis/reconstruction/classes1/com/flipkart/chatheads/ui
+          copy_tree "$RUNNER_TEMP/decompiled-dex/classes2/sources/com/flipkart/chatheads/ui"             reference-analysis/reconstruction/classes2/com/flipkart/chatheads/ui
+
+          for root in             "$RUNNER_TEMP/decompiled-dex/classes/sources/defpackage"             "$RUNNER_TEMP/decompiled-dex/classes2/sources/defpackage"; do
+            test -d "$root" || continue
+
+            while IFS= read -r -d '' file; do
+              rel="${file#"$root"/}"
+              dest="reference-analysis/reconstruction/defpackage/$rel"
+              mkdir -p "$(dirname "$dest")"
+              cp "$file" "$dest"
+            done < <(
+              grep -RIl -E                 'ChatHeadService|BrowserManager|WindowManager|TYPE_APPLICATION_OVERLAY|MotionEvent|GestureDetector|VelocityTracker|Spring|spring|fling|drag|snap|dock|bubble|floating|overlay|WebView|Notification|startForeground'                 "$root" 2>/dev/null | sort -z
+            )
+          done
+
+          manifest="$(find "$RUNNER_TEMP/decompiled-apk/resources" -name AndroidManifest.xml -print -quit 2>/dev/null || true)"
+          if test -n "$manifest" && test -f "$manifest"; then
+            cp "$manifest" reference-analysis/reconstruction/AndroidManifest.xml
+          fi
+
+          echo "=== RECONSTRUCTION SOURCE FILES ===" > reference-analysis/reconstruction-index.txt
+          find reference-analysis/reconstruction -type f | sort >> reference-analysis/reconstruction-index.txt
+
+          echo "RECONSTRUCTION_SOURCE_COUNT=$(find reference-analysis/reconstruction -type f -name '*.java' | wc -l)" >> reference-analysis/reconstruction-index.txt
+
       - name: Commit analysis report
         shell: bash
         run: |
