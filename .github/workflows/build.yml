@@ -1,5 +1,7 @@
 name: Build Halo Browser
 
+# Native Android bubble build validation
+
 on:
   push:
     branches:
