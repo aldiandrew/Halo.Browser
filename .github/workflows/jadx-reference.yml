@@ -8,11 +8,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   jadx:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,25 +22,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p "$RUNNER_TEMP/jadx"
-          release_json="$RUNNER_TEMP/jadx/release.json"
-          curl -fsSL https://api.github.com/repos/skylot/jadx/releases/latest -o "$release_json"
-          url="$(jq -r '.assets[] | select(.name | endswith(".zip")) | .browser_download_url' "$release_json" | head -n1)"
+          curl -fsSL             https://api.github.com/repos/skylot/jadx/releases/latest             -o "$RUNNER_TEMP/jadx/release.json"
+
+          url="$(jq -r             '.assets[] | select(.name | endswith(".zip")) | .browser_download_url'             "$RUNNER_TEMP/jadx/release.json" | head -n1)"
+
           test -n "$url"
           curl -fL "$url" -o "$RUNNER_TEMP/jadx/jadx.zip"
           unzip -q "$RUNNER_TEMP/jadx/jadx.zip" -d "$RUNNER_TEMP/jadx"
+
           JADX_BIN="$(find "$RUNNER_TEMP/jadx" -type f -path '*/bin/jadx' -print -quit)"
           test -n "$JADX_BIN"
           chmod +x "$JADX_BIN"
           printf '%s\n' "$JADX_BIN" > "$RUNNER_TEMP/jadx/jadx-bin"
 
-      - name: Decompile APK and extract behavior
+      - name: Decompile reference APK
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
 
           apk="$(find ss -maxdepth 1 -type f -name 'Bubble_ Fast Floating Browser 1.9.apk+' -print -quit)"
-          test -n "$apk"
+          if [ -z "$apk" ]; then
+            echo "REFERENCE_APK_NOT_FOUND"
+            exit 1
+          fi
+
           cp "$apk" "$RUNNER_TEMP/reference.apk"
           apk="$RUNNER_TEMP/reference.apk"
 
@@ -47,6 +55,7 @@ jobs:
           mkdir -p reference-analysis
 
           JADX_BIN="$(cat "$RUNNER_TEMP/jadx/jadx-bin")"
+
           set +e
           "$JADX_BIN" \
             --deobf \
@@ -57,32 +66,35 @@ jobs:
             "$apk" > reference-analysis/jadx-console.txt 2>&1
           jadx_exit=$?
           set -e
+
           echo "JADX_EXIT=$jadx_exit" >> reference-analysis/jadx-console.txt
 
-          echo "=== APK FILE ===" > reference-analysis/apk-info.txt
+          echo "=== APK INFO ===" > reference-analysis/apk-info.txt
           stat "$apk" >> reference-analysis/apk-info.txt
           sha256sum "$apk" >> reference-analysis/apk-info.txt
 
-          echo "=== JADX CONSOLE ===" > reference-analysis/jadx-console-summary.txt
-          cat reference-analysis/jadx-console.txt >> reference-analysis/jadx-console-summary.txt || true
+          echo "=== DECOMPILED FILE TREE ===" > reference-analysis/decompiled-tree.txt
+          find "$RUNNER_TEMP/decompiled" -type f 2>/dev/null | sort >> reference-analysis/decompiled-tree.txt || true
 
-          echo "=== DECOMPILED TREE ===" > reference-analysis/decompiled-tree.txt
-          find "$RUNNER_TEMP/decompiled" -maxdepth 4 -type f | sort >> reference-analysis/decompiled-tree.txt || true
+          echo "=== SOURCE INDEX ===" > reference-analysis/source-index.txt
+          find "$RUNNER_TEMP/decompiled" -type f \\( -name '*.java' -o -name '*.kt' \\) 2>/dev/null | sort >> reference-analysis/source-index.txt || true
 
-          echo "=== SOURCE FILE INDEX ===" > reference-analysis/source-index.txt
-          find "$RUNNER_TEMP/decompiled" -type f \( -name '*.java' -o -name '*.kt' \) | sort >> reference-analysis/source-index.txt || true
-
-          target_index="$RUNNER_TEMP/targeted-class-index.txt"
+          target_index="$RUNNER_TEMP/targeted-source-index.txt"
           : > "$target_index"
+
           grep -R -l -i -E \
             'WindowManager|TYPE_APPLICATION_OVERLAY|SYSTEM_ALERT_WINDOW|AccessibilityService|MotionEvent|GestureDetector|VelocityTracker|snap|dock|edge|drag|close|resize|minimi|expand|bubble|floating|chat.?head|WebView|ForegroundService|startForeground|Notification|service' \
             "$RUNNER_TEMP/decompiled" 2>/dev/null \
-            | grep -E '\\.(java|kt)
+            | grep -E '\\.(java|kt)$' \
+            | sort -u >> "$target_index" || true
+
+          echo "=== TARGETED CLASS INDEX ===" > reference-analysis/targeted-class-index.txt
+          cat "$target_index" >> reference-analysis/targeted-class-index.txt
 
           echo "=== MANIFEST CANDIDATES ===" > reference-analysis/manifest-candidates.txt
-          find "$RUNNER_TEMP/decompiled" -type f -iname '*manifest*.xml' -print | sort >> reference-analysis/manifest-candidates.txt || true
+          find "$RUNNER_TEMP/decompiled" -type f -iname '*manifest*.xml' 2>/dev/null | sort >> reference-analysis/manifest-candidates.txt || true
 
-          manifest="$(find "$RUNNER_TEMP/decompiled" -type f -path '*/AndroidManifest.xml' -print -quit || true)"
+          manifest="$(find "$RUNNER_TEMP/decompiled" -type f -path '*/AndroidManifest.xml' -print -quit 2>/dev/null || true)"
           if [ -n "$manifest" ]; then
             cp "$manifest" reference-analysis/AndroidManifest.xml.txt
           else
@@ -92,14 +104,16 @@ jobs:
           echo "=== TARGETED SOURCE CONTENT ===" > reference-analysis/targeted-source.txt
           while IFS= read -r file; do
             [ -z "$file" ] && continue
-            echo >> reference-analysis/targeted-source.txt
-            echo "================================================================" >> reference-analysis/targeted-source.txt
-            echo "FILE: $file" >> reference-analysis/targeted-source.txt
-            echo "================================================================" >> reference-analysis/targeted-source.txt
-            cat "$file" >> reference-analysis/targeted-source.txt
+            {
+              echo
+              echo "================================================================"
+              echo "FILE: $file"
+              echo "================================================================"
+              cat "$file"
+            } >> reference-analysis/targeted-source.txt
           done < "$target_index"
 
-          echo "=== RELEVANT RESOURCE STRINGS ===" > reference-analysis/relevant-resources.txt
+          echo "=== RELEVANT RESOURCES ===" > reference-analysis/relevant-resources.txt
           if [ -d "$RUNNER_TEMP/decompiled/resources" ]; then
             grep -R -n -i -E \
               'bubble|floating|browser|chat.?head|minimi|expand|close|drag|move|resize|tab|new tab|settings|home|back|forward|refresh|download|incognito|desktop|mobile|share' \
@@ -113,53 +127,13 @@ jobs:
             "$RUNNER_TEMP/decompiled" 2>/dev/null \
             >> reference-analysis/symbol-hits.txt || true
 
-      - name: Upload JADX analysis
-        uses: actions/upload-artifact@v4
-        with:
-          name: bubble-jadx-analysis
-          path: reference-analysis
-          if-no-files-found: error
+          echo "=== JADX CONSOLE ==="
+          cat reference-analysis/jadx-console.txt
 
- \
-            | sort >> "$target_index" || true
-          {
-            echo "=== TARGETED CLASS INDEX ==="
-            cat "$target_index"
-          } > reference-analysis/targeted-class-index.txt
+          echo "=== TARGETED SOURCE FILE COUNT ==="
+          wc -l "$target_index" || true
 
-          echo "=== MANIFEST CANDIDATES ===" > reference-analysis/manifest-candidates.txt
-          find "$RUNNER_TEMP/decompiled" -type f -iname '*manifest*.xml' -print | sort >> reference-analysis/manifest-candidates.txt || true
-
-          manifest="$(find "$RUNNER_TEMP/decompiled" -type f -path '*/AndroidManifest.xml' -print -quit || true)"
-          if [ -n "$manifest" ]; then
-            cp "$manifest" reference-analysis/AndroidManifest.xml.txt
-          else
-            echo "No decoded AndroidManifest.xml found." > reference-analysis/AndroidManifest.xml.txt
-          fi
-
-          echo "=== TARGETED SOURCE CONTENT ===" > reference-analysis/targeted-source.txt
-          while IFS= read -r file; do
-            [ -z "$file" ] && continue
-            echo >> reference-analysis/targeted-source.txt
-            echo "================================================================" >> reference-analysis/targeted-source.txt
-            echo "FILE: $file" >> reference-analysis/targeted-source.txt
-            echo "================================================================" >> reference-analysis/targeted-source.txt
-            cat "$file" >> reference-analysis/targeted-source.txt
-          done < reference-analysis/targeted-class-index.txt
-
-          echo "=== RELEVANT RESOURCE STRINGS ===" > reference-analysis/relevant-resources.txt
-          if [ -d "$RUNNER_TEMP/decompiled/resources" ]; then
-            grep -R -n -i -E \
-              'bubble|floating|browser|chat.?head|minimi|expand|close|drag|move|resize|tab|new tab|settings|home|back|forward|refresh|download|incognito|desktop|mobile|share' \
-              "$RUNNER_TEMP/decompiled/resources" 2>/dev/null \
-              >> reference-analysis/relevant-resources.txt || true
-          fi
-
-          echo "=== WINDOW / TOUCH / SERVICE SYMBOLS ===" > reference-analysis/symbol-hits.txt
-          grep -R -n -i -E \
-            'WindowManager\\.LayoutParams|TYPE_APPLICATION_OVERLAY|TYPE_PHONE|TYPE_SYSTEM_ALERT|FLAG_NOT_FOCUSABLE|FLAG_NOT_TOUCH_MODAL|FLAG_LAYOUT_IN_SCREEN|FLAG_ALT_FOCUSABLE_IM|onTouchEvent|setOnTouchListener|ACTION_DOWN|ACTION_MOVE|ACTION_UP|ACTION_CANCEL|VelocityTracker|GestureDetector|OVERLAY|BUBBLE|FLOAT|SERVICE|NOTIFICATION' \
-            "$RUNNER_TEMP/decompiled" 2>/dev/null \
-            >> reference-analysis/symbol-hits.txt || true
+          exit 0
 
       - name: Upload JADX analysis
         uses: actions/upload-artifact@v4
@@ -167,4 +141,3 @@ jobs:
           name: bubble-jadx-analysis
           path: reference-analysis
           if-no-files-found: error
-
