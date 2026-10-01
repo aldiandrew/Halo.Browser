@@ -36,7 +36,7 @@ jobs:
           echo "APKANALYZER=$APKANALYZER" | tee -a report/tools.txt
           "$AAPT" dump badging extracted/base.apk > report/base-badging.txt
           "$AAPT" dump permissions extracted/base.apk > report/base-permissions.txt
-          "$AAPT" dump xmltree --file extracted/base.apk AndroidManifest.xml > report/base-manifest-tree.txt
+          "$AAPT" dump xmltree extracted/base.apk --file AndroidManifest.xml > report/base-manifest-tree.txt
           "$APKANALYZER" manifest permissions extracted/base.apk > report/base-apkanalyzer-permissions.txt
           "$APKANALYZER" manifest print extracted/base.apk > report/base-manifest.xml
           "$APKANALYZER" dex packages extracted/base.apk > report/base-dex-packages.txt || true
