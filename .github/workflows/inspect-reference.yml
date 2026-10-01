@@ -65,24 +65,21 @@ jobs:
           ./jadx/bin/jadx --deobf --show-bad-code -d decompiled extracted/base.apk > /tmp/jadx.log 2>&1 || true
 
           mkdir -p report/decompiled
-          find decompiled -type f | grep -E '/(ChatHeadService|FloatingActivity|PermissionActivity|IntroActivity)\.(java|kt)
-        uses: actions/upload-artifact@v4
-        with:
-          name: reference-base-apk-inspection
-          path: report/ | while read -r f; do
+          find decompiled -type f | grep -E '/(ChatHeadService|FloatingActivity|PermissionActivity|IntroActivity)\.(java|kt)$' | while read -r f; do
             echo "=== $f ==="
             cp "$f" report/decompiled/
             sed -n '1,420p' "$f" || true
-          done
+          done || true
 
           grep -RIlE 'SYSTEM_ALERT_WINDOW|TYPE_APPLICATION_OVERLAY|WindowManager|addView|removeView|ChatHead|FloatingActivity' decompiled \
             | head -40 > report/relevant-source-files.txt || true
 
-          while read -r f; do
-            cp --parents "$f" report/decompiled/ 2>/dev/null || true
-          done < report/relevant-source-files.txt
           echo "=== RELEVANT SOURCE FILES ==="
           cat report/relevant-source-files.txt || true
+          while read -r f; do
+            [ -z "$f" ] && continue
+            cp --parents "$f" report/decompiled/ 2>/dev/null || true
+          done < report/relevant-source-files.txt
 
       - name: Upload inspection report
         uses: actions/upload-artifact@v4
