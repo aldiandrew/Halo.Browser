@@ -1,0 +1,54 @@
+name: Inspect reference Bubble Browser APK
+
+on:
+  push:
+    paths:
+      - "ss/Bubble_ Fast Floating Browser 1.9.apk+"
+      - ".github/workflows/inspect-reference.yml"
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download reference APK
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 3 \
+            "https://raw.githubusercontent.com/aldiandrew/Halo.Browser/main/ss/Bubble_%20Fast%20Floating%20Browser%201.9.apk%2B" \
+            -o reference.apk
+          file reference.apk
+          ls -lh reference.apk
+
+      - name: Inspect APK manifest and DEX
+        run: |
+          set -euxo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+          AAPT2="$(find "$SDK/build-tools" -name aapt2 -type f | sort -V | tail -1)"
+          APKANALYZER="$(find "$SDK/cmdline-tools" "$SDK/tools" "$SDK" -path '*/bin/apkanalyzer' -type f 2>/dev/null | head -1 || true)"
+          echo "AAPT2=$AAPT2"
+          echo "APKANALYZER=$APKANALYZER"
+          mkdir -p report
+          "$AAPT2" dump badging reference.apk > report/aapt2-badging.txt || true
+          "$AAPT2" dump permissions reference.apk > report/aapt2-permissions.txt || true
+          "$AAPT2" dump xmltree reference.apk AndroidManifest.xml > report/manifest-tree.txt || true
+          if [ -n "$APKANALYZER" ]; then
+            "$APKANALYZER" manifest permissions reference.apk > report/apkanalyzer-permissions.txt || true
+            "$APKANALYZER" manifest print reference.apk > report/apkanalyzer-manifest.xml || true
+            "$APKANALYZER" dex packages reference.apk > report/dex-packages.txt || true
+            "$APKANALYZER" dex references reference.apk > report/dex-references.txt || true
+          fi
+          unzip -l reference.apk > report/zip-list.txt
+          unzip -p reference.apk classes.dex 2>/dev/null | strings | grep -Ei 'SYSTEM_ALERT_WINDOW|TYPE_APPLICATION_OVERLAY|WindowManager|AccessibilityService|Notification|BubbleMetadata|startForeground|Floating|overlay|bubble' > report/dex-string-hits.txt || true
+          echo "=== PERMISSIONS ==="
+          cat report/aapt2-permissions.txt || true
+          echo "=== BADGING ==="
+          cat report/aapt2-badging.txt | head -80 || true
+          echo "=== DEX HITS ==="
+          cat report/dex-string-hits.txt || true
+
+      - name: Upload inspection report
+        uses: actions/upload-artifact@v4
+        with:
+          name: reference-apk-inspection
+          path: report/
