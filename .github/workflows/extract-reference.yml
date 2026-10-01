@@ -71,3 +71,5 @@ jobs:
           git add reference-source
           git commit -m "Extract decompiled reference browser classes"
           git push
+
+# trigger
