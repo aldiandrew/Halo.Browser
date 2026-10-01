@@ -362,7 +362,7 @@ class ChatHeadService : Service() {
         targetY: Int,
         vx: Float,
         vy: Float,
-        dampingRatio: Float = 0.78f
+        springDamping: Float = 0.78f
     ) {
         val p = head.params ?: return
         val view = head.view ?: return
@@ -385,7 +385,7 @@ class ChatHeadService : Service() {
         SpringAnimation(p, px).apply {
             spring = SpringForce(targetX.toFloat()).apply {
                 stiffness = 700f
-                dampingRatio = dampingRatio
+                dampingRatio = springDamping
             }
             setStartVelocity(vx)
         }.start()
@@ -448,7 +448,7 @@ class ChatHeadService : Service() {
 
         address = EditText(this).apply {
             hint = "Search or enter URL"
-            singleLine = true
+            setSingleLine(true)
             textSize = 14f
             setText(if (head.tab.url == NEW_TAB_URL) "" else head.tab.url)
             setPadding(dp(16), 0, dp(16), 0)
