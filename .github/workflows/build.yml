@@ -1,6 +1,6 @@
 name: Build Halo Browser
 
-# Native Android bubble build validation - mutable bubble PendingIntent
+# Native Android bubble build validation - separate native bubble tabs
 
 on:
   push:
