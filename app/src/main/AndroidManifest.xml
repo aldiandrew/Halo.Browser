@@ -42,7 +42,7 @@
         </activity>
 
         <service
-            android:name=".FloatingBubbleService"
+            android:name=".ChatHeadService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
