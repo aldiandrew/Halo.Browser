@@ -326,7 +326,7 @@ class ChatHeadService : Service() {
     }
 
     private fun arrange() {
-        val list = tabs.values.filter { it !== dragging }
+        val list = tabs.values.filter { it !== dragging && it.view?.visibility != View.GONE }
         val left = list.filter { it.tab.x + bubbleSize() / 2 < screenWidth() / 2 }
             .sortedWith(compareBy<Head> { if (it.tab.id == heroId) 0 else 1 }.thenBy { it.tab.y })
         val right = list.filter { it.tab.x + bubbleSize() / 2 >= screenWidth() / 2 }
@@ -393,7 +393,7 @@ class ChatHeadService : Service() {
         SpringAnimation(p, py).apply {
             spring = SpringForce(targetY.toFloat()).apply {
                 stiffness = 700f
-                dampingRatio = dampingRatio
+                dampingRatio = springDamping
             }
             setStartVelocity(vy)
         }.start()
@@ -499,12 +499,13 @@ class ChatHeadService : Service() {
         }
 
         val p = overlayParams(
-            (screenWidth() * 0.92f).toInt().coerceAtLeast(dp(300)),
-            (screenHeight() * 0.72f).toInt().coerceAtLeast(dp(420)),
+            (screenWidth() * 0.78f).toInt().coerceAtLeast(dp(300)),
+            (screenHeight() * 0.64f).toInt().coerceAtLeast(dp(420)),
             true
         )
-        p.x = dp(8)
-        p.y = dp(50)
+        p.gravity = Gravity.CENTER
+        p.x = 0
+        p.y = 0
         wm.addView(root, p)
         expandedRoot = root
         expandedParams = p
@@ -554,7 +555,7 @@ class ChatHeadService : Service() {
         close.setOnClickListener { closeExpanded(false) }
 
         val p = overlayParams(
-            (screenWidth() * 0.9f).toInt().coerceAtLeast(dp(300)),
+            (screenWidth() * 0.78f).toInt().coerceAtLeast(dp(300)),
             (screenHeight() * 0.72f).toInt().coerceAtLeast(dp(420)),
             true
         )
@@ -726,6 +727,7 @@ class ChatHeadService : Service() {
             else if (id != null) tabs[id]?.view?.visibility = View.VISIBLE
         }
         expandedId = null
+        arrange()
     }
 
     private fun removeHead(head: Head) {
