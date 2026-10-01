@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity() {
 
     private var waitingForOverlay = false
     private var pendingUrl: String? = null
+    private var pendingUrl: String? = null
 
     private val notificationLauncher =
         registerForActivityResult(
@@ -114,6 +115,48 @@ class MainActivity : ComponentActivity() {
 
         val incoming = intent.dataString
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?: return
+
+        pendingUrl = incoming
+
+        if (Settings.canDrawOverlays(this)) {
+            pendingUrl = null
+            launchFloating(incoming)
+        } else {
+            openOverlaySettings()
+        }
+
+        handleIncomingIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        if (
+            waitingForOverlay &&
+            Settings.canDrawOverlays(this)
+        ) {
+            waitingForOverlay = false
+            pendingUrl?.let {
+                pendingUrl = null
+                launchFloating(it)
+            }
+        }
+    }
+
+    private fun handleIncomingIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+
+        val incoming = intent.dataString
+            ?.takeIf {
+                it.startsWith("http://") ||
+                    it.startsWith("https://")
+            }
             ?: return
 
         pendingUrl = incoming
