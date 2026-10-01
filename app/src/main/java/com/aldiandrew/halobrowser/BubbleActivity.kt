@@ -2,18 +2,21 @@ package com.aldiandrew.halobrowser
 
 import android.app.Activity
 import android.os.Bundle
+import android.view.Window
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 
 class BubbleActivity : Activity() {
 
-    private lateinit var webView: WebView
+    private var webView: WebView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        webView = WebView(this).apply {
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val browserView = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.loadsImagesAutomatically = true
@@ -24,19 +27,37 @@ class BubbleActivity : Activity() {
             settings.displayZoomControls = false
 
             webChromeClient = WebChromeClient()
-            webViewClient = WebViewClient()
+
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView,
+                    url: String
+                ): Boolean {
+                    return false
+                }
+            }
         }
 
-        setContentView(webView)
+        webView = browserView
+        setContentView(browserView)
 
         val url = intent.getStringExtra(MainActivity.EXTRA_URL)
+            ?.takeIf {
+                it.startsWith("http://") || it.startsWith("https://")
+            }
             ?: "https://www.google.com"
 
-        webView.loadUrl(url)
+        browserView.loadUrl(url)
     }
 
     override fun onDestroy() {
-        webView.destroy()
+        webView?.apply {
+            stopLoading()
+            webChromeClient = null
+            webViewClient = null
+            destroy()
+        }
+        webView = null
         super.onDestroy()
     }
 }
