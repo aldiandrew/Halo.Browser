@@ -39,6 +39,7 @@ import java.io.ByteArrayOutputStream
 import java.util.Base64
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
 class ChatHeadService : Service() {
 
@@ -407,7 +408,7 @@ class ChatHeadService : Service() {
 
         address = EditText(this).apply {
             hint = "Search or enter URL"
-            singleLine = true
+            setSingleLine(true)
             textSize = 14f
             setText(if (head.tab.url == NEW_TAB_URL) "" else head.tab.url)
             setPadding(dp(16), 0, dp(16), 0)
