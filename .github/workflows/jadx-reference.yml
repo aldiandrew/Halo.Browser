@@ -75,7 +75,7 @@ jobs:
           if test -n "$manifest"; then cat "$manifest" >> reference-analysis/AndroidManifest.xml.txt; fi
 
           echo "=== TARGETED SOURCE CONTENT ===" > reference-analysis/targeted-source.txt
-          while IFS= read -r file; do
+          tail -n +2 reference-analysis/targeted-class-index.txt | while IFS= read -r file; do
             echo >> reference-analysis/targeted-source.txt
             echo "================================================================" >> reference-analysis/targeted-source.txt
             echo "FILE: $file" >> reference-analysis/targeted-source.txt
