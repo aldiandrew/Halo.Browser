@@ -1,4 +1,5 @@
 name: Analyze reference APK with JADX
+# Re-run this workflow whenever the reference APK analysis needs refreshing.
 
 on:
   push:
