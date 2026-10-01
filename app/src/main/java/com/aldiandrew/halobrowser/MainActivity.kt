@@ -134,12 +134,12 @@ class MainActivity : ComponentActivity() {
         val serviceIntent =
             Intent(
                 this,
-                FloatingBubbleService::class.java
+                ChatHeadService::class.java
             ).apply {
                 action =
-                    FloatingBubbleService.ACTION_ADD_BUBBLE
+                    ChatHeadService.ACTION_ADD_BUBBLE
                 putExtra(
-                    FloatingBubbleService.EXTRA_URL,
+                    ChatHeadService.EXTRA_URL,
                     url
                 )
             }
