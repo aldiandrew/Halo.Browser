@@ -1,3 +1,9 @@
 === ROOT DEX FILES ===
-ROOT_DEX_COUNT=0
+classes.dex
+classes2.dex
+ROOT_DEX_COUNT=2
 === ALL DEX-LIKE PATHS ===
+assets/dexopt/baseline.prof
+assets/dexopt/baseline.profm
+classes.dex
+classes2.dex

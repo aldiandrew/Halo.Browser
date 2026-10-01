@@ -1,10 +1,10 @@
-=== APK FILE ===
-  File: /home/runner/work/_temp/reference.apk
-  Size: 7873232   	Blocks: 15384      IO Block: 4096   regular file
-Device: 8,1	Inode: 2422897     Links: 1
+=== SELECTED APK ===
+  File: /home/runner/work/_temp/reference-apks/base.apk
+  Size: 14515630  	Blocks: 28352      IO Block: 4096   regular file
+Device: 259,1	Inode: 2422939     Links: 1
 Access: (0644/-rw-r--r--)  Uid: ( 1001/  runner)   Gid: ( 1001/  runner)
-Access: 2026-10-01 18:26:28.870476736 +0000
-Modify: 2026-10-01 18:26:28.872476727 +0000
-Change: 2026-10-01 18:26:28.872476727 +0000
- Birth: 2026-10-01 18:26:28.870476736 +0000
-f13315fc6a9c04880650c380f06d45f353e0db89c2fa174d5cac0326115b3d93  /home/runner/work/_temp/reference.apk
+Access: 2026-10-01 18:27:34.210153437 +0000
+Modify: 2026-10-01 18:27:34.208153419 +0000
+Change: 2026-10-01 18:27:34.208153419 +0000
+ Birth: 2026-10-01 18:27:34.108152535 +0000
+07a21b842547d598ccdcdd442cb1a4c4d73f65b89f750fc25809f323b42aff17  /home/runner/work/_temp/reference-apks/base.apk

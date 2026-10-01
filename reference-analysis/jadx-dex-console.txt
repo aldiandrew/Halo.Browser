@@ -1,0 +1,32 @@
+=== INPUT: /home/runner/work/_temp/dex-inputs/classes.dex ===
+  File: /home/runner/work/_temp/dex-inputs/classes.dex
+  Size: 7514696   	Blocks: 14680      IO Block: 4096   regular file
+Device: 259,1	Inode: 2422945     Links: 1
+Access: (0644/-rw-r--r--)  Uid: ( 1001/  runner)   Gid: ( 1001/  runner)
+Access: 2026-10-01 18:27:34.748158190 +0000
+Modify: 2026-10-01 18:27:34.780158473 +0000
+Change: 2026-10-01 18:27:34.780158473 +0000
+ Birth: 2026-10-01 18:27:34.748158190 +0000
+--- JADX OUTPUT ---
+INFO  - loading ...
+INFO  - processing ...
+INFO  - progress: 0 of 5024 (0%)INFO  - progress: 17 of 5024 (0%)INFO  - progress: 83 of 5024 (1%)INFO  - progress: 235 of 5024 (4%)INFO  - progress: 372 of 5024 (7%)INFO  - progress: 837 of 5024 (16%)INFO  - progress: 1093 of 5024 (21%)INFO  - progress: 1348 of 5024 (26%)INFO  - progress: 1550 of 5024 (30%)INFO  - progress: 1809 of 5024 (36%)INFO  - progress: 2035 of 5024 (40%)INFO  - progress: 2262 of 5024 (45%)INFO  - progress: 2388 of 5024 (47%)INFO  - progress: 2593 of 5024 (51%)INFO  - progress: 2787 of 5024 (55%)INFO  - progress: 2860 of 5024 (56%)INFO  - progress: 3035 of 5024 (60%)INFO  - progress: 3156 of 5024 (62%)INFO  - progress: 3315 of 5024 (65%)INFO  - progress: 3436 of 5024 (68%)INFO  - progress: 3549 of 5024 (70%)INFO  - progress: 3760 of 5024 (74%)INFO  - progress: 3944 of 5024 (78%)INFO  - progress: 4131 of 5024 (82%)INFO  - progress: 4436 of 5024 (88%)INFO  - progress: 4625 of 5024 (92%)INFO  - progress: 4815 of 5024 (95%)INFO  - progress: 4914 of 5024 (97%)                                                             ERROR - finished with errors, count: 18
+DEX_EXIT_CODE=3
+DEX_SOURCE_COUNT=8021
+
+=== INPUT: /home/runner/work/_temp/dex-inputs/classes2.dex ===
+  File: /home/runner/work/_temp/dex-inputs/classes2.dex
+  Size: 3401400   	Blocks: 6648       IO Block: 4096   regular file
+Device: 259,1	Inode: 2422946     Links: 1
+Access: (0644/-rw-r--r--)  Uid: ( 1001/  runner)   Gid: ( 1001/  runner)
+Access: 2026-10-01 18:27:34.783158499 +0000
+Modify: 2026-10-01 18:27:34.798158632 +0000
+Change: 2026-10-01 18:27:34.798158632 +0000
+ Birth: 2026-10-01 18:27:34.783158499 +0000
+--- JADX OUTPUT ---
+INFO  - loading ...
+INFO  - processing ...
+INFO  - progress: 0 of 1874 (0%)INFO  - progress: 52 of 1874 (2%)INFO  - progress: 214 of 1874 (11%)INFO  - progress: 444 of 1874 (23%)INFO  - progress: 602 of 1874 (32%)INFO  - progress: 775 of 1874 (41%)INFO  - progress: 1303 of 1874 (69%)INFO  - progress: 1359 of 1874 (72%)INFO  - progress: 1430 of 1874 (76%)INFO  - progress: 1486 of 1874 (79%)INFO  - progress: 1536 of 1874 (81%)INFO  - progress: 1627 of 1874 (86%)INFO  - progress: 1702 of 1874 (90%)INFO  - progress: 1761 of 1874 (93%)INFO  - progress: 1761 of 1874 (93%)INFO  - progress: 1761 of 1874 (93%)INFO  - progress: 1761 of 1874 (93%)                                                             ERROR - finished with errors, count: 5
+DEX_EXIT_CODE=3
+DEX_SOURCE_COUNT=3160
+
