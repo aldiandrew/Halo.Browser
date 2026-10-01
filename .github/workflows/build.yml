@@ -70,15 +70,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf reference-decompiled
-          mkdir -p reference-decompiled
+          rm -rf reference-decompiled reference-apk-unpacked
+          mkdir -p reference-decompiled reference-apk-unpacked
+          unzip -q "$REFERENCE_APK" -d reference-apk-unpacked
+          echo "=== Reference APK package ==="
+          find reference-apk-unpacked -maxdepth 2 -type f -print | sort
+          if [ -f reference-apk-unpacked/base.apk ]; then
+            INPUT_APK=reference-apk-unpacked/base.apk
+          else
+            INPUT_APK="$REFERENCE_APK"
+          fi
+          echo "Decompiling: $INPUT_APK"
           jadx \
             --show-bad-code \
             --deobf \
             --deobf-use-sourcename \
             --threads-count 2 \
             --output-dir reference-decompiled \
-            "$REFERENCE_APK"
+            "$INPUT_APK"
+          echo "=== Decompiled Java/Kotlin count ==="
+          find reference-decompiled/sources -type f 2>/dev/null | wc -l
 
       - name: Inventory decompiled source
         shell: bash
