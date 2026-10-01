@@ -1,1 +1,0 @@
-SELECTED_APK=/home/runner/work/_temp/reference-apks/base.apk

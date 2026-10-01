@@ -1,7 +1,0 @@
-AndroidManifest.xml
-META-INF/versions/9/OSGI-INF/MANIFEST.MF
-assets/dexopt/baseline.prof
-assets/dexopt/baseline.profm
-classes.dex
-classes2.dex
-resources.arsc

@@ -1,8 +1,0 @@
-=== BUNDLE CONTENTS ===
-apk+.json
-base.apk
-icon.png
-split_config.en.apk
-split_config.in.apk
-split_config.ms.apk
-split_config.xxhdpi.apk
