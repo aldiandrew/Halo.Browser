@@ -639,14 +639,12 @@ class FloatingBubbleService : Service() {
         val webParams =
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                0
+                FrameLayout.LayoutParams.MATCH_PARENT
             ).apply {
                 leftMargin = dp(8)
                 rightMargin = dp(8)
                 topMargin = dp(120)
                 bottomMargin = dp(10)
-                height = 0
-                weight = 1f
             }
 
         root.addView(
