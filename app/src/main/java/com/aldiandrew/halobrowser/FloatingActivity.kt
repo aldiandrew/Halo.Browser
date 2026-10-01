@@ -110,10 +110,7 @@ class FloatingActivity : ComponentActivity() {
         )
 
         currentId =
-            intent.getIntExtra(
-                ChatHeadService.EXTRA_BUBBLE_ID,
-                ChatHeadService.TAB_ID
-            )
+            intent.getStringExtra(ChatHeadService.EXTRA_BUBBLE_ID) ?: ChatHeadService.TAB_ID
 
         currentUrl =
             intent.getStringExtra(
@@ -147,10 +144,7 @@ class FloatingActivity : ComponentActivity() {
         setIntent(intent)
 
         currentId =
-            intent.getIntExtra(
-                ChatHeadService.EXTRA_BUBBLE_ID,
-                currentId
-            )
+            intent.getStringExtra(ChatHeadService.EXTRA_BUBBLE_ID) ?: currentId
 
         currentUrl =
             intent.getStringExtra(
