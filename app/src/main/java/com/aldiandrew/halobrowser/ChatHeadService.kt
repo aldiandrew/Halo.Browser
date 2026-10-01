@@ -52,7 +52,8 @@ class ChatHeadService : Service() {
         var downY: Float = 0f,
         var startX: Int = 0,
         var startY: Int = 0,
-        var hidden: Boolean = false
+        var hidden: Boolean = false,
+        var moved: Boolean = false
     )
 
     private lateinit var wm: WindowManager
@@ -268,6 +269,7 @@ class ChatHeadService : Service() {
                 val lp = head.view.layoutParams as WindowManager.LayoutParams
                 head.startX = lp.x
                 head.startY = lp.y
+                head.moved = false
                 showCloseTarget()
                 return true
             }
@@ -276,6 +278,7 @@ class ChatHeadService : Service() {
                 if (draggingHead !== head) return true
                 val dx = (event.rawX - head.downX).toInt()
                 val dy = (event.rawY - head.downY).toInt()
+                if (abs(dx) > dp(6) || abs(dy) > dp(6)) head.moved = true
                 moveHead(head, head.startX + dx, head.startY + dy)
                 updateCloseTarget(head)
                 return true
@@ -283,11 +286,15 @@ class ChatHeadService : Service() {
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (draggingHead === head) {
+                    val wasMoved = head.moved
                     val close = isNearCloseTarget(head)
                     draggingHead = null
                     head.state = HeadState.FREE
                     closeCloseTarget()
-                    if (close) {
+                    if (!wasMoved) {
+                        closeCloseTarget()
+                        if (head.tab == null) openManager() else openBubble(head.tab.id)
+                    } else if (close) {
                         if (head.tab == null) {
                             stopSelf()
                         } else {
@@ -642,8 +649,7 @@ class ChatHeadService : Service() {
         val p = overlayParams((screenWidth() * 0.78f).toInt(), (screenHeight() * 0.64f).toInt()).apply {
             x = ((screenWidth() - width) / 2).coerceAtLeast(0)
             y = ((screenHeight() - height) / 2).coerceAtLeast(0)
-            flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            flags = WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
         }
         browserParams = p
         try { wm.addView(browserContainer, p) } catch (_: Exception) {
