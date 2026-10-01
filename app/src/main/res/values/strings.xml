@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Halo Browser</string>
+    <string name="bubble_channel_name">Halo Browser Bubble</string>
+    <string name="bubble_channel_description">Floating browser bubble for Halo Browser</string>
+    <string name="bubble_title">Halo Browser</string>
+    <string name="bubble_content">Browser Bubble aktif</string>
+</resources>
