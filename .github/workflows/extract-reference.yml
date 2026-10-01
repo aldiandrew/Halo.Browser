@@ -1,0 +1,73 @@
+name: Extract reference browser source
+
+on:
+  push:
+    paths:
+      - ".github/workflows/extract-reference.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install JADX
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/jadx"
+          curl -fsSL https://api.github.com/repos/skylot/jadx/releases/latest -o "$RUNNER_TEMP/release.json"
+          url="$(jq -r '.assets[] | select(.name == "jadx-1.5.6.zip") | .browser_download_url' "$RUNNER_TEMP/release.json")"
+          test -n "$url"
+          curl -fL "$url" -o "$RUNNER_TEMP/jadx/jadx.zip"
+          unzip -q "$RUNNER_TEMP/jadx/jadx.zip" -d "$RUNNER_TEMP/jadx"
+          JADX_BIN="$(find "$RUNNER_TEMP/jadx" -type f -path "*/bin/jadx" -print -quit)"
+          test -n "$JADX_BIN"
+          chmod +x "$JADX_BIN"
+
+      - name: Decompile reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$(find ss -maxdepth 1 -type f -name 'Bubble_ Fast Floating Browser 1.9.apk+' -print -quit)"
+          test -n "$bundle"
+
+          rm -rf "$RUNNER_TEMP/ref" reference-source
+          mkdir -p "$RUNNER_TEMP/ref" reference-source
+
+          unzip -p "$bundle" base.apk > "$RUNNER_TEMP/ref/base.apk"
+          test -s "$RUNNER_TEMP/ref/base.apk"
+
+          "$JADX_BIN" --show-bad-code --threads-count 2 -d "$RUNNER_TEMP/ref/out" "$RUNNER_TEMP/ref/base.apk" >/dev/null 2>&1 || true
+
+          for pkg in com/bubble/browser/pro com/flipkart/chatheads/ui; do
+            src="$RUNNER_TEMP/ref/out/sources/$pkg"
+            if test -d "$src"; then
+              mkdir -p "reference-source/$pkg"
+              find "$src" -type f -name '*.java' -print0 | while IFS= read -r -d '' f; do
+                rel="${f#"$src"/}"
+                case "/$pkg/$rel" in
+                  */com/bubble/browser/pro/AdDisplayActivity.java) continue ;;
+                esac
+                cp "$f" "reference-source/$pkg/$rel"
+              done
+            fi
+          done
+
+          echo "=== app classes ===" > reference-source/README.txt
+          find reference-source -type f -name '*.java' | sort >> reference-source/README.txt
+          echo >> reference-source/README.txt
+          echo "ads removed: AdDisplayActivity.java" >> reference-source/README.txt
+
+      - name: Commit extracted source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reference-source
+          git commit -m "Extract decompiled reference browser classes"
+          git push
