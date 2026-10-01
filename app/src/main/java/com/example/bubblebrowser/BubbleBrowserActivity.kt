@@ -45,7 +45,7 @@ class BubbleBrowserActivity : Activity() {
         } catch (e: Exception) {
             Toast.makeText(
                 this,
-                "WebView gagal dijalankan: \${e.message ?: "error tidak diketahui"}",
+                "WebView gagal dijalankan: ${e.message ?: "error tidak diketahui"}",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -135,7 +135,7 @@ class BubbleBrowserActivity : Activity() {
         } catch (e: Exception) {
             Toast.makeText(
                 this,
-                "Gagal membuka tautan: \${e.message ?: "error tidak diketahui"}",
+                "Gagal membuka tautan: ${e.message ?: "error tidak diketahui"}",
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -154,8 +154,6 @@ class BubbleBrowserActivity : Activity() {
         try {
             webView.apply {
                 stopLoading()
-                clearHistory()
-                webViewClient = null
                 (parent as? ViewGroup)?.removeView(this)
                 destroy()
             }
