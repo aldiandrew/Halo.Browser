@@ -1050,7 +1050,17 @@ class FloatingBubbleService : Service() {
     }
 
     private fun closeBrowserWindow() {
-        browserRoot?.let {
+        val root = browserRoot
+        val web = activeWebView
+
+        if (root != null && web != null && web.parent === root) {
+            try {
+                root.removeView(web)
+            } catch (_: Exception) {
+            }
+        }
+
+        root?.let {
             try {
                 wm.removeView(it)
             } catch (_: Exception) {
