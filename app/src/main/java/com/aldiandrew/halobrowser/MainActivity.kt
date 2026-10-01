@@ -1,21 +1,13 @@
 package com.aldiandrew.halobrowser
 
-import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,221 +16,214 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 
 class MainActivity : ComponentActivity() {
 
-    private val notificationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private var waitingForOverlayPermission = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        createNotificationChannel()
-
-        if (
-            Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    BrowserScreen(
+                    HomeScreen(
                         initialUrl = extractUrl(intent) ?: DEFAULT_URL,
-                        onOpenBubble = ::showNativeBubble
+                        overlayGranted = Settings.canDrawOverlays(this),
+                        onLaunch = { url -> launchFloatingMode(url) },
+                        onPermission = { openOverlaySettings() }
                     )
                 }
             }
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (waitingForOverlayPermission && Settings.canDrawOverlays(this)) {
+            waitingForOverlayPermission = false
+            launchFloatingMode(extractUrl(intent) ?: DEFAULT_URL)
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (Settings.canDrawOverlays(this)) {
+            launchFloatingMode(extractUrl(intent) ?: DEFAULT_URL)
+        }
+    }
+
+    private fun launchFloatingMode(url: String) {
+        if (!Settings.canDrawOverlays(this)) {
+            openOverlaySettings()
+            return
+        }
+
+        val serviceIntent = Intent(this, FloatingBubbleService::class.java).apply {
+            action = FloatingBubbleService.ACTION_ADD_BUBBLE
+            putExtra(FloatingBubbleService.EXTRA_URL, url)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+    }
+
+    private fun openOverlaySettings() {
+        waitingForOverlayPermission = true
+        startActivity(
+            Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+        )
     }
 
     private fun extractUrl(sourceIntent: Intent?): String? {
-        val value = sourceIntent?.getStringExtra(EXTRA_URL)
-            ?: sourceIntent?.data?.toString()
-
-        return value?.takeIf {
-            it.startsWith("http://") || it.startsWith("https://")
-        }
-    }
-
-    private fun createNotificationChannel() {
-        val manager = getSystemService(NotificationManager::class.java)
-
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            getString(R.string.bubble_channel_name),
-            NotificationManager.IMPORTANCE_HIGH
-        ).apply {
-            description = "Halo Browser native Android bubbles"
-            setShowBadge(true)
-            lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
-        }
-
-        manager.createNotificationChannel(channel)
-    }
-
-    private fun showNativeBubble(url: String) {
-        BubbleActivity.createBubble(this, url)
+        val value = sourceIntent?.getStringExtra(EXTRA_URL) ?: sourceIntent?.data?.toString()
+        return value?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
     }
 
     companion object {
-        private const val CHANNEL_ID = "halo_browser_bubbles_v3"
-        private const val DEFAULT_URL = "https://www.google.com"
-
         const val EXTRA_URL = "halo_browser_url"
-        const val EXTRA_BUBBLE_ID = "halo_browser_bubble_id"
-
-        fun createNotificationChannel(context: android.content.Context) {
-            val manager = context.getSystemService(NotificationManager::class.java)
-
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                context.getString(R.string.bubble_channel_name),
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Halo Browser native Android bubbles"
-                setShowBadge(true)
-                lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
-            }
-
-            manager.createNotificationChannel(channel)
-        }
+        private const val DEFAULT_URL = "https://www.google.com"
     }
 }
 
-@Composable
-private fun BrowserScreen(
+@androidx.compose.runtime.Composable
+private fun HomeScreen(
     initialUrl: String,
-    onOpenBubble: (String) -> Unit
+    overlayGranted: Boolean,
+    onLaunch: (String) -> Unit,
+    onPermission: () -> Unit
 ) {
-    var address by remember(initialUrl) {
-        mutableStateOf(initialUrl)
-    }
+    var url by remember(initialUrl) { mutableStateOf(initialUrl) }
 
-    var currentUrl by remember(initialUrl) {
-        mutableStateOf(initialUrl)
-    }
+    val background = Color(0xFF080D2A)
+    val card = Color(0xFF1E2A3D)
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(12.dp)
+        modifier = Modifier.fillMaxSize().background(background).padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedTextField(
-                value = address,
-                onValueChange = { address = it },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                label = { Text("Address") }
-            )
+        Text(
+            text = "Halo Browser",
+            color = Color.White,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
 
-            Button(
-                onClick = {
-                    currentUrl = normalizeUrl(address)
-                    address = currentUrl
-                },
-                modifier = Modifier.padding(top = 8.dp)
-            ) {
-                Text("Go")
-            }
-        }
+        Text(
+            text = "Fast Floating Browser",
+            color = Color(0xFF9BA8C2),
+            style = MaterialTheme.typography.bodyLarge
+        )
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Button(
-            onClick = { onOpenBubble(currentUrl) },
+        Surface(
+            color = card,
+            shape = RoundedCornerShape(28.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Minimize to Android Bubble")
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { context ->
-                WebView(context).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.loadsImagesAutomatically = true
-                    settings.allowFileAccess = false
-                    settings.allowContentAccess = false
-                    settings.setSupportZoom(true)
-                    settings.builtInZoomControls = false
-                    settings.displayZoomControls = false
-
-                    webChromeClient = WebChromeClient()
-
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(
-                            view: WebView,
-                            request: WebResourceRequest
-                        ): Boolean {
-                            return false
-                        }
-
-                        override fun onPageFinished(
-                            view: WebView,
-                            url: String
-                        ) {
-                            super.onPageFinished(view, url)
-                        }
-                    }
-
-                    loadUrl(currentUrl)
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = if (overlayGranted) "●" else "○",
+                        color = if (overlayGranted) Color(0xFF19C589) else Color(0xFFFFB74D),
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                    Spacer(modifier = Modifier.padding(horizontal = 6.dp))
+                    Text(
+                        text = if (overlayGranted) "Floating Service Ready" else "Overlay Permission Needed",
+                        color = if (overlayGranted) Color(0xFF19C589) else Color(0xFFFFB74D),
+                        style = MaterialTheme.typography.titleLarge
+                    )
                 }
-            },
-            update = { webView ->
-                if (webView.url != currentUrl) {
-                    webView.loadUrl(currentUrl)
+
+                Text(
+                    text = if (overlayGranted) {
+                        "Bubbles can appear above other apps."
+                    } else {
+                        "Allow Halo Browser to display floating bubbles above other apps."
+                    },
+                    color = Color(0xFF8997B1),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+
+                OutlinedButton(
+                    onClick = onPermission,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Display over other apps")
+                }
+
+                Button(
+                    onClick = { onLaunch(normalizeUrl(url)) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Launch Floating Mode")
                 }
             }
+        }
+
+        Text(
+            text = "Quick Actions",
+            color = Color.White,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
         )
+
+        OutlinedButton(
+            onClick = { onLaunch(DEFAULT_URL) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("+  New Bubble")
+        }
+
+        OutlinedTextField(
+            value = url,
+            onValueChange = { url = it },
+            singleLine = true,
+            label = { Text("Website") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        TextButton(onClick = { url = DEFAULT_URL }) {
+            Text("Reset to Google")
+        }
     }
 }
+
+private const val DEFAULT_URL = "https://www.google.com"
 
 private fun normalizeUrl(value: String): String {
     val input = value.trim()
-
-    if (input.isEmpty()) {
-        return "https://www.google.com"
-    }
-
-    if (
-        input.startsWith("http://") ||
-        input.startsWith("https://")
-    ) {
-        return input
-    }
-
+    if (input.isEmpty()) return DEFAULT_URL
+    if (input.startsWith("http://") || input.startsWith("https://")) return input
     if (input.contains(" ") || !input.contains(".")) {
         return "https://www.google.com/search?q=" + Uri.encode(input)
     }
-
     return "https://$input"
 }
