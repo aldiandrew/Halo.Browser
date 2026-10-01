@@ -33,7 +33,6 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -50,7 +49,6 @@ import androidx.compose.ui.unit.dp
 class MainActivity : ComponentActivity() {
 
     private var waitingForOverlay = false
-    private var pendingUrl: String? = null
     private var pendingUrl: String? = null
 
     private val notificationLauncher =
@@ -75,14 +73,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             HaloExpressiveTheme {
                 HomeScreen(
-                    overlayGranted =
-                        Settings.canDrawOverlays(this),
-                    onLaunch = {
-                        launchFloating(it)
-                    },
-                    onPermission = {
-                        openOverlaySettings()
-                    }
+                    overlayGranted = Settings.canDrawOverlays(this),
+                    onLaunch = ::launchFloating,
+                    onPermission = ::openOverlaySettings
                 )
             }
         }
@@ -103,86 +96,48 @@ class MainActivity : ComponentActivity() {
             Settings.canDrawOverlays(this)
         ) {
             waitingForOverlay = false
-            pendingUrl?.let {
+
+            pendingUrl?.let { url ->
                 pendingUrl = null
-                launchFloating(it)
+                launchFloating(url)
             }
         }
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_VIEW) return
-
-        val incoming = intent.dataString
-            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-            ?: return
-
-        pendingUrl = incoming
-
-        if (Settings.canDrawOverlays(this)) {
-            pendingUrl = null
-            launchFloating(incoming)
-        } else {
-            openOverlaySettings()
+        if (intent?.action != Intent.ACTION_VIEW) {
+            return
         }
 
-        handleIncomingIntent(intent)
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        handleIncomingIntent(intent)
-    }
-
-    override fun onResume() {
-        super.onResume()
-
-        if (
-            waitingForOverlay &&
-            Settings.canDrawOverlays(this)
-        ) {
-            waitingForOverlay = false
-            pendingUrl?.let {
-                pendingUrl = null
-                launchFloating(it)
-            }
-        }
-    }
-
-    private fun handleIncomingIntent(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_VIEW) return
-
-        val incoming = intent.dataString
-            ?.takeIf {
+        val incoming =
+            intent.dataString?.takeIf {
                 it.startsWith("http://") ||
                     it.startsWith("https://")
             }
-            ?: return
-
-        pendingUrl = incoming
+                ?: return
 
         if (Settings.canDrawOverlays(this)) {
-            pendingUrl = null
             launchFloating(incoming)
         } else {
+            pendingUrl = incoming
             openOverlaySettings()
         }
     }
 
     private fun launchFloating(url: String) {
         if (!Settings.canDrawOverlays(this)) {
+            pendingUrl = url
             openOverlaySettings()
             return
         }
 
-        val intent =
+        val serviceIntent =
             Intent(
                 this,
                 FloatingBubbleService::class.java
             ).apply {
                 action =
-                    FloatingBubbleService
-                        .ACTION_ADD_BUBBLE
+                    FloatingBubbleService.ACTION_ADD_BUBBLE
                 putExtra(
                     FloatingBubbleService.EXTRA_URL,
                     url
@@ -190,18 +145,19 @@ class MainActivity : ComponentActivity() {
             }
 
         if (Build.VERSION.SDK_INT >= 26) {
-            startForegroundService(intent)
+            startForegroundService(serviceIntent)
         } else {
-            startService(intent)
+            startService(serviceIntent)
         }
     }
 
     private fun openOverlaySettings() {
         waitingForOverlay = true
+
         startActivity(
             Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:" + packageName)
+                Uri.parse("package:$packageName")
             )
         )
     }
@@ -214,60 +170,44 @@ private fun HomeScreen(
     onPermission: () -> Unit
 ) {
     var address by remember {
-        mutableStateOf(
-            "https://www.google.com"
-        )
+        mutableStateOf("https://www.google.com")
     }
 
     Scaffold(
-        containerColor =
-            MaterialTheme.colorScheme.surface
+        containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    MaterialTheme.colorScheme.surface
-                )
+                .background(MaterialTheme.colorScheme.surface)
                 .padding(padding)
                 .padding(horizontal = 20.dp),
-            verticalArrangement =
-                Arrangement.spacedBy(18.dp)
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             Spacer(Modifier.height(8.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment =
-                    Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
                         "Halo Browser",
-                        style =
-                            MaterialTheme.typography
-                                .headlineLarge
+                        style = MaterialTheme.typography.headlineLarge
                     )
                     Text(
                         "Fast Floating Browser",
-                        style =
-                            MaterialTheme.typography
-                                .bodyLarge,
-                        color =
-                            MaterialTheme.colorScheme
-                                .onSurfaceVariant
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
-                FilledIconButton(
-                    onClick = { }
-                ) {
+                FilledIconButton(onClick = onPermission) {
                     Icon(
                         Icons.Filled.Settings,
-                        contentDescription =
-                            "Settings"
+                        contentDescription = "Settings"
                     )
                 }
             }
@@ -275,22 +215,17 @@ private fun HomeScreen(
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(32.dp),
-                colors =
-                    CardDefaults.elevatedCardColors(
-                        containerColor =
-                            MaterialTheme.colorScheme
-                                .surfaceContainerHigh
-                    )
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor =
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                )
             ) {
                 Column(
-                    modifier =
-                        Modifier.padding(22.dp),
-                    verticalArrangement =
-                        Arrangement.spacedBy(14.dp)
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Row(
-                        verticalAlignment =
-                            Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             if (overlayGranted) "●" else "○",
@@ -298,12 +233,9 @@ private fun HomeScreen(
                                 if (overlayGranted) {
                                     Color(0xFF19C589)
                                 } else {
-                                    MaterialTheme.colorScheme
-                                        .error
+                                    MaterialTheme.colorScheme.error
                                 },
-                            style =
-                                MaterialTheme.typography
-                                    .headlineSmall
+                            style = MaterialTheme.typography.headlineSmall
                         )
 
                         Spacer(Modifier.size(8.dp))
@@ -311,26 +243,21 @@ private fun HomeScreen(
                         Column {
                             Text(
                                 if (overlayGranted) {
-                                    "Service Active"
+                                    "Floating mode ready"
                                 } else {
-                                    "Permission Required"
+                                    "Permission required"
                                 },
-                                style =
-                                    MaterialTheme.typography
-                                        .titleLarge
+                                style = MaterialTheme.typography.titleLarge
                             )
                             Text(
                                 if (overlayGranted) {
-                                    "Floating chat heads are ready."
+                                    "Bubbles can stay above other apps."
                                 } else {
                                     "Allow Halo Browser to appear above other apps."
                                 },
-                                style =
-                                    MaterialTheme.typography
-                                        .bodyMedium,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color =
-                                    MaterialTheme.colorScheme
-                                        .onSurfaceVariant
+                                    MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -344,16 +271,12 @@ private fun HomeScreen(
                             contentDescription = null
                         )
                         Spacer(Modifier.size(8.dp))
-                        Text(
-                            "Display over other apps"
-                        )
+                        Text("Display over other apps")
                     }
 
                     androidx.compose.material3.Button(
                         onClick = {
-                            onLaunch(
-                                normalizeUrl(address)
-                            )
+                            onLaunch(normalizeUrl(address))
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -362,33 +285,26 @@ private fun HomeScreen(
                             contentDescription = null
                         )
                         Spacer(Modifier.size(8.dp))
-                        Text(
-                            "Launch Floating Mode"
-                        )
+                        Text("Launch Floating Mode")
                     }
                 }
             }
 
             Text(
                 "Quick Actions",
-                style =
-                    MaterialTheme.typography
-                        .headlineMedium
+                style = MaterialTheme.typography.headlineMedium
             )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement =
-                    Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 QuickCard(
                     icon = Icons.Filled.Add,
                     label = "New Bubble",
                     modifier = Modifier.weight(1f),
                     onClick = {
-                        onLaunch(
-                            "https://www.google.com"
-                        )
+                        onLaunch("https://www.google.com")
                     }
                 )
 
@@ -409,14 +325,10 @@ private fun HomeScreen(
 
             OutlinedTextField(
                 value = address,
-                onValueChange = {
-                    address = it
-                },
+                onValueChange = { address = it },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                label = {
-                    Text("Website")
-                }
+                label = { Text("Website or search") }
             )
         }
     }
@@ -433,19 +345,14 @@ private fun QuickCard(
         onClick = onClick,
         modifier = modifier.height(132.dp),
         shape = RoundedCornerShape(28.dp),
-        colors =
-            CardDefaults.elevatedCardColors(
-                containerColor =
-                    MaterialTheme.colorScheme
-                        .surfaceContainer
-            )
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
+        )
     ) {
         Column(
             modifier = Modifier.fillMaxSize(),
-            horizontalAlignment =
-                Alignment.CenterHorizontally,
-            verticalArrangement =
-                Arrangement.Center
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
             Icon(
                 icon,
@@ -458,9 +365,7 @@ private fun QuickCard(
     }
 }
 
-private fun normalizeUrl(
-    value: String
-): String {
+private fun normalizeUrl(value: String): String {
     val input = value.trim()
 
     if (input.isEmpty()) {
@@ -482,5 +387,5 @@ private fun normalizeUrl(
             Uri.encode(input)
     }
 
-    return "https://" + input
+    return "https://$input"
 }
