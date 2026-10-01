@@ -18,7 +18,11 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -63,7 +67,15 @@ class FloatingBubbleService : Service() {
         nextId = prefs.getInt(KEY_NEXT_ID, 1)
         restoreTabs()
 
-        bubbles.values.forEach { createBubbleView(it) }
+        bubbles.values.forEach {
+            createBubbleView(it)
+            val web = getOrCreateWebView(it)
+            if (it.url != NEW_TAB_URL && it.url.isNotBlank()) {
+                web.loadUrl(it.url)
+            } else {
+                showNewTabPage(web)
+            }
+        }
         ensureFirstTab()
         createNotificationChannel()
     }
@@ -154,6 +166,13 @@ class FloatingBubbleService : Service() {
         bubbles[id] = state
         persistTabs()
         createBubbleView(state)
+
+        val web = getOrCreateWebView(state)
+        if (state.url != NEW_TAB_URL && state.url.isNotBlank()) {
+            web.loadUrl(state.url)
+        } else {
+            showNewTabPage(web)
+        }
 
         if (open) {
             activeId = id
@@ -553,6 +572,14 @@ class FloatingBubbleService : Service() {
                 "×"
             )
 
+        val back = createHeaderButton("‹")
+        val forward = createHeaderButton("›")
+        val refresh = createHeaderButton("↻")
+
+        header.addView(back, LinearLayout.LayoutParams(dp(42), dp(42)))
+        header.addView(forward, LinearLayout.LayoutParams(dp(42), dp(42)))
+        header.addView(refresh, LinearLayout.LayoutParams(dp(42), dp(42)))
+
         header.addView(title)
 
         header.addView(
@@ -681,6 +708,18 @@ class FloatingBubbleService : Service() {
             }
         )
 
+        back.setOnClickListener {
+            if (web.canGoBack()) web.goBack()
+        }
+
+        forward.setOnClickListener {
+            if (web.canGoForward()) web.goForward()
+        }
+
+        refresh.setOnClickListener {
+            web.reload()
+        }
+
         newTab.setOnClickListener {
             addTab(
                 NEW_TAB_URL,
@@ -716,59 +755,10 @@ class FloatingBubbleService : Service() {
             )
         )
 
-        web.webViewClient =
-            object : WebViewClient() {
-                override fun onPageFinished(
-                    view: WebView,
-                    url: String
-                ) {
-                    super.onPageFinished(
-                        view,
-                        url
-                    )
-
-                    bubble.url =
-                        if (
-                            url.isBlank()
-                        ) {
-                            NEW_TAB_URL
-                        } else {
-                            url
-                        }
-
-                    if (
-                        addressField === address
-                    ) {
-                        address.setText(
-                            if (
-                                bubble.url ==
-                                NEW_TAB_URL
-                            ) {
-                                ""
-                            } else {
-                                bubble.url
-                            }
-                        )
-                        address.setSelection(
-                            address.text.length
-                        )
-                    }
-
-                    title.text =
-                        view.title?.takeIf {
-                            it.isNotBlank()
-                        } ?: "Halo Browser"
-
-                    persistTabs()
-                }
-
-                override fun shouldOverrideUrlLoading(
-                    view: WebView,
-                    request: WebResourceRequest
-                ): Boolean {
-                    return false
-                }
-            }
+        configureWebView(
+            web,
+            bubble
+        )
 
         val width =
             (screenWidth() * 0.92f)
@@ -825,6 +815,85 @@ class FloatingBubbleService : Service() {
         }
     }
 
+    private fun configureWebView(
+        web: WebView,
+        bubble: BubbleState
+    ) {
+        web.webViewClient =
+            object : WebViewClient() {
+                override fun onPageFinished(
+                    view: WebView,
+                    url: String
+                ) {
+                    super.onPageFinished(view, url)
+
+                    bubble.url =
+                        if (url.isBlank()) NEW_TAB_URL else url
+
+                    addressField?.let { field ->
+                        if (activeWebView === view) {
+                            field.setText(
+                                if (bubble.url == NEW_TAB_URL) "" else bubble.url
+                            )
+                            field.setSelection(field.text.length)
+                        }
+                    }
+
+                    titleView?.let { title ->
+                        if (activeWebView === view) {
+                            title.text =
+                                view.title?.takeIf { it.isNotBlank() }
+                                    ?: "Halo Browser"
+                        }
+                    }
+
+                    persistTabs()
+                }
+
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): WebResourceResponse? {
+                    val host = request.url.host?.lowercase() ?: ""
+                    if (isBlockedHost(host)) {
+                        return WebResourceResponse(
+                            "text/plain",
+                            "UTF-8",
+                            null
+                        )
+                    }
+                    return super.shouldInterceptRequest(view, request)
+                }
+
+                override fun shouldOverrideUrlLoading(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): Boolean = false
+            }
+    }
+
+    private fun isBlockedHost(host: String): Boolean {
+        if (host.isBlank()) return false
+
+        val blocked = arrayOf(
+            "doubleclick.net",
+            "googlesyndication.com",
+            "googleadservices.com",
+            "adservice.google.com",
+            "adsystem.com",
+            "adnxs.com",
+            "amazon-adsystem.com",
+            "adcolony.com",
+            "unityads.com",
+            "appsflyer.com",
+            "facebook.net"
+        )
+
+        return blocked.any {
+            host == it || host.endsWith("." + it)
+        }
+    }
+
     private fun getOrCreateWebView(
         bubble: BubbleState
     ): WebView {
@@ -859,9 +928,17 @@ class FloatingBubbleService : Service() {
                     true
                 settings.mediaPlaybackRequiresUserGesture =
                     false
+                settings.cacheMode =
+                    WebSettings.LOAD_DEFAULT
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
                 webChromeClient =
                     WebChromeClient()
             }
+
+        CookieManager.getInstance().setAcceptCookie(true)
+
+        configureWebView(web, bubble)
 
         bubble.webView = web
         return web
