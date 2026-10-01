@@ -3,6 +3,7 @@ name: Build Halo Browser
 # Native Android bubble build validation - separate native bubble tabs
 
 on:
+  pull_request:
   push:
     branches:
       - main
