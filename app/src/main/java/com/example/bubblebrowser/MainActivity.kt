@@ -6,11 +6,11 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.ShortcutInfo
-import android.app.ShortcutManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
 import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
@@ -52,18 +52,9 @@ class MainActivity : Activity() {
                 return
             }
 
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                Toast.makeText(
-                    this,
-                    "Bubble API membutuhkan Android 10 atau lebih baru.",
-                    Toast.LENGTH_LONG
-                ).show()
-                return
-            }
-
             createNotificationChannel()
 
-            val shortcut = createBrowserShortcut()
+            val shortcutId = createBrowserShortcut()
 
             val bubbleIntent = Intent(
                 this,
@@ -91,7 +82,6 @@ class MainActivity : Activity() {
             )
                 .setDesiredHeight(700)
                 .setAutoExpandBubble(true)
-                .setSuppressNotification(false)
                 .build()
 
             val notification = Notification.Builder(
@@ -104,23 +94,28 @@ class MainActivity : Activity() {
                 .setCategory(Notification.CATEGORY_MESSAGE)
                 .setOngoing(true)
                 .setAutoCancel(false)
-                .setShortcutId(shortcut.id)
+                .setShortcutId(shortcutId)
                 .setBubbleMetadata(bubbleMetadata)
                 .build()
 
             val notificationManager =
                 getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-            notificationManager.notify(NOTIFICATION_ID, notification)
+            notificationManager.notify(
+                NOTIFICATION_ID,
+                notification
+            )
 
-            if (!notificationManager.areBubblesAllowed()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                !notificationManager.areBubblesAllowed()
+            ) {
                 Toast.makeText(
                     this,
                     "Bubble dinonaktifkan oleh pengaturan notifikasi.",
                     Toast.LENGTH_LONG
                 ).show()
             }
-        } catch (securityException: SecurityException) {
+        } catch (_: SecurityException) {
             Toast.makeText(
                 this,
                 "Notifikasi tidak diizinkan.",
@@ -159,7 +154,7 @@ class MainActivity : Activity() {
         notificationManager.createNotificationChannel(channel)
     }
 
-    private fun createBrowserShortcut(): ShortcutInfo {
+    private fun createBrowserShortcut(): String {
         val shortcutManager = getSystemService(ShortcutManager::class.java)
             ?: throw IllegalStateException("ShortcutManager tidak tersedia")
 
@@ -185,16 +180,16 @@ class MainActivity : Activity() {
             )
             .setIntent(shortcutIntent)
             .setCategories(
-                setOf(
-                    CONVERSATION_SHORTCUT_CATEGORY
-                )
+                setOf(CONVERSATION_SHORTCUT_CATEGORY)
             )
             .setLongLived(true)
             .build()
 
-        shortcutManager.dynamicShortcuts = listOf(shortcut)
+        shortcutManager.addDynamicShortcuts(
+            listOf(shortcut)
+        )
 
-        return shortcut
+        return SHORTCUT_ID
     }
 
     override fun onRequestPermissionsResult(
