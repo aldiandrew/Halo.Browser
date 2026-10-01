@@ -28,7 +28,10 @@ jobs:
           test -n "$url"
           curl -fL "$url" -o "$RUNNER_TEMP/jadx/jadx.zip"
           unzip -q "$RUNNER_TEMP/jadx/jadx.zip" -d "$RUNNER_TEMP/jadx"
-          test -x "$RUNNER_TEMP/jadx/jadx/bin/jadx"
+          JADX_BIN="$(find "$RUNNER_TEMP/jadx" -type f -path "*/bin/jadx" -print -quit)"
+          test -n "$JADX_BIN"
+          chmod +x "$JADX_BIN"
+          echo "JADX_BIN=$JADX_BIN" >> "$GITHUB_ENV"
 
       - name: Decompile APK and extract behavior
         shell: bash
@@ -43,7 +46,7 @@ jobs:
           rm -rf "$RUNNER_TEMP/decompiled" reference-analysis
           mkdir -p reference-analysis
 
-          "$RUNNER_TEMP/jadx/jadx/bin/jadx"             --deobf             --deobf-use-sourcename             --show-bad-code             --threads-count 2             -d "$RUNNER_TEMP/decompiled"             "$apk" > reference-analysis/jadx-console.txt 2>&1 || true
+          "$JADX_BIN"             --deobf             --deobf-use-sourcename             --show-bad-code             --threads-count 2             -d "$RUNNER_TEMP/decompiled"             "$apk" > reference-analysis/jadx-console.txt 2>&1 || true
 
           echo "=== APK FILE ===" > reference-analysis/apk-info.txt
           stat "$apk" >> reference-analysis/apk-info.txt
