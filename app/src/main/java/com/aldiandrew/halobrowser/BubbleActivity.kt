@@ -53,8 +53,6 @@ class BubbleActivity : Activity() {
     override fun onDestroy() {
         webView?.apply {
             stopLoading()
-            webChromeClient = null
-            webViewClient = null
             destroy()
         }
         webView = null
