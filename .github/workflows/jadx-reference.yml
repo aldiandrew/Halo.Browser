@@ -46,7 +46,8 @@ jobs:
           rm -rf "$RUNNER_TEMP/decompiled" reference-analysis
           mkdir -p reference-analysis
 
-          "$RUNNER_TEMP/jadx/jadx/bin/jadx"             --deobf             --deobf-use-sourcename             --show-bad-code             --threads-count 2             -d "$RUNNER_TEMP/decompiled"             "$apk" > reference-analysis/jadx-console.txt 2>&1 || true
+          JADX_BIN="$(cat "$RUNNER_TEMP/jadx/jadx-bin")"
+          "$JADX_BIN"             --deobf             --use-source-name-as-class-name-alias always             --show-bad-code             --threads-count 2             -d "$RUNNER_TEMP/decompiled"             "$apk" > reference-analysis/jadx-console.txt 2>&1 || true
 
           echo "=== APK FILE ===" > reference-analysis/apk-info.txt
           stat "$apk" >> reference-analysis/apk-info.txt
