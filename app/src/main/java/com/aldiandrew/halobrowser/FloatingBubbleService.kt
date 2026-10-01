@@ -62,6 +62,7 @@ class FloatingBubbleService : Service() {
 
         nextId = prefs.getInt(KEY_NEXT_ID, 1)
         restoreTabs()
+        bubbles.values.forEach { createBubbleView(it) }
         ensureManager()
         ensureFirstTab()
         createNotificationChannel()
@@ -320,7 +321,7 @@ class FloatingBubbleService : Service() {
             makeDragListener(bubble, size)
         )
 
-        wm.addView(root, bubble.params)
+        wm.addView(root, bubble.params!!)
     }
 
     private fun makeDragListener(
@@ -358,7 +359,7 @@ class FloatingBubbleService : Service() {
                         params.y = startY + dy
                         clamp(params, size)
                         wm.updateViewLayout(
-                            bubble.view,
+                            bubble.view!!,
                             params
                         )
                     }
@@ -452,7 +453,7 @@ class FloatingBubbleService : Service() {
 
                 try {
                     wm.updateViewLayout(
-                        bubble.view,
+                        bubble.view!!,
                         params
                     )
                 } catch (_: Exception) {
