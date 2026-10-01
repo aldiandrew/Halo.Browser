@@ -1,6 +1,7 @@
 name: Analyze reference APK with JADX
 
 on:
+  pull_request:
   push:
     paths:
       - ".github/workflows/jadx-reference.yml"
