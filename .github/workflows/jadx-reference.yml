@@ -77,7 +77,8 @@ jobs:
           find "$RUNNER_TEMP/decompiled" -type f 2>/dev/null | sort >> reference-analysis/decompiled-tree.txt || true
 
           echo "=== SOURCE INDEX ===" > reference-analysis/source-index.txt
-          find "$RUNNER_TEMP/decompiled" -type f \\( -name '*.java' -o -name '*.kt' \\) 2>/dev/null | sort >> reference-analysis/source-index.txt || true
+          find "$RUNNER_TEMP/decompiled" -type f -name '*.java' 2>/dev/null | sort >> reference-analysis/source-index.txt || true
+          find "$RUNNER_TEMP/decompiled" -type f -name '*.kt' 2>/dev/null | sort >> reference-analysis/source-index.txt || true
 
           target_index="$RUNNER_TEMP/targeted-source-index.txt"
           : > "$target_index"
@@ -85,7 +86,6 @@ jobs:
           grep -R -l -i -E \
             'WindowManager|TYPE_APPLICATION_OVERLAY|SYSTEM_ALERT_WINDOW|AccessibilityService|MotionEvent|GestureDetector|VelocityTracker|snap|dock|edge|drag|close|resize|minimi|expand|bubble|floating|chat.?head|WebView|ForegroundService|startForeground|Notification|service' \
             "$RUNNER_TEMP/decompiled" 2>/dev/null \
-            | grep -E '\\.(java|kt)$' \
             | sort -u >> "$target_index" || true
 
           echo "=== TARGETED CLASS INDEX ===" > reference-analysis/targeted-class-index.txt
