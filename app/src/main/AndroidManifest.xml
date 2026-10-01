@@ -13,6 +13,12 @@
         android:usesCleartextTraffic="false">
 
         <activity
+            android:name=".BubbleActivity"
+            android:allowEmbedded="true"
+            android:resizeableActivity="true"
+            android:documentLaunchMode="always" />
+
+        <activity
             android:name=".MainActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize"
             android:exported="true"
