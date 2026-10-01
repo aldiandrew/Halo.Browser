@@ -8,6 +8,10 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -281,12 +285,12 @@ private fun BrowserScreen(
                     settings.builtInZoomControls = false
                     settings.displayZoomControls = false
 
-                    webChromeClient = android.webkit.WebChromeClient()
+                    webChromeClient = WebChromeClient()
 
-                    webViewClient = object : android.webkit.WebViewClient() {
+                    webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(
                             view: WebView,
-                            request: android.webkit.WebResourceRequest
+                            request: WebResourceRequest
                         ): Boolean {
                             return false
                         }
