@@ -591,7 +591,7 @@ class FloatingBubbleService : Service() {
 
         val address =
             EditText(this).apply {
-                singleLine = true
+                setSingleLine(true)
                 textSize = 14f
                 setText(
                     if (
