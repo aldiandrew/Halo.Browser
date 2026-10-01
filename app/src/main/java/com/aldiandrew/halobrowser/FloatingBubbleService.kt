@@ -99,7 +99,7 @@ class FloatingBubbleService : Service() {
                 addTab(
                     intent.getStringExtra(EXTRA_URL)
                         ?: DEFAULT_URL,
-                    open = true
+                    open = false
                 )
             }
 
