@@ -16,26 +16,32 @@ import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -43,7 +49,6 @@ import androidx.core.app.Person
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
-import android.graphics.drawable.Icon
 
 class MainActivity : ComponentActivity() {
 
@@ -228,16 +233,31 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private data class BrowserTab(
+    val id: Int,
+    val url: String
+)
+
 @Composable
 private fun BrowserScreen(
     initialUrl: String,
     onOpenBubble: (String) -> Unit
 ) {
-    var address by remember(initialUrl) {
-        mutableStateOf(initialUrl)
+    var nextTabId by remember { mutableStateOf(2) }
+
+    var tabs by remember(initialUrl) {
+        mutableStateOf(
+            listOf(
+                BrowserTab(1, initialUrl)
+            )
+        )
     }
 
-    var currentUrl by remember(initialUrl) {
+    var selectedTabId by remember(initialUrl) {
+        mutableStateOf(1)
+    }
+
+    var address by remember(initialUrl) {
         mutableStateOf(initialUrl)
     }
 
@@ -260,58 +280,118 @@ private fun BrowserScreen(
 
             Button(
                 onClick = {
-                    currentUrl = normalizeUrl(address)
-                },
-                modifier = Modifier.padding(top = 8.dp)
+                    val url = normalizeUrl(address)
+                    tabs = tabs.map { tab ->
+                        if (tab.id == selectedTabId) {
+                            tab.copy(url = url)
+                        } else {
+                            tab
+                        }
+                    }
+                    address = url
+                }
             ) {
                 Text("Go")
             }
+
+            OutlinedButton(
+                onClick = {
+                    val newTab = BrowserTab(
+                        id = nextTabId,
+                        url = DEFAULT_URL
+                    )
+                    nextTabId += 1
+                    tabs = tabs + newTab
+                    selectedTabId = newTab.id
+                    address = newTab.url
+                }
+            ) {
+                Text("+")
+            }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.padding(top = 4.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            tabs.forEach { tab ->
+                OutlinedButton(
+                    onClick = {
+                        selectedTabId = tab.id
+                        address = tab.url
+                    }
+                ) {
+                    Text("Tab ${tab.id}")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.padding(top = 4.dp))
 
         Button(
-            onClick = { onOpenBubble(currentUrl) },
+            onClick = {
+                val selected = tabs.firstOrNull { it.id == selectedTabId }
+                onOpenBubble(selected?.url ?: initialUrl)
+            },
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Minimize to Android Bubble")
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.padding(top = 4.dp))
 
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { context ->
-                WebView(context).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.loadsImagesAutomatically = true
-                    settings.allowFileAccess = false
-                    settings.allowContentAccess = false
-                    settings.setSupportZoom(true)
-                    settings.builtInZoomControls = false
-                    settings.displayZoomControls = false
+        Box(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            tabs.forEach { tab ->
+                key(tab.id) {
+                    AndroidView(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .zIndex(
+                                if (tab.id == selectedTabId) 1f else 0f
+                            )
+                            .graphicsLayer {
+                                alpha = if (tab.id == selectedTabId) 1f else 0f
+                            },
+                        factory = { context ->
+                            WebView(context).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                settings.loadsImagesAutomatically = true
+                                settings.allowFileAccess = false
+                                settings.allowContentAccess = false
+                                settings.setSupportZoom(true)
+                                settings.builtInZoomControls = false
+                                settings.displayZoomControls = false
 
-                    webChromeClient = WebChromeClient()
+                                webChromeClient = WebChromeClient()
 
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(
-                            view: WebView,
-                            request: WebResourceRequest
-                        ): Boolean {
-                            return false
+                                webViewClient = object : WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(
+                                        view: WebView,
+                                        request: WebResourceRequest
+                                    ): Boolean {
+                                        return false
+                                    }
+                                }
+
+                                loadUrl(tab.url)
+                            }
+                        },
+                        update = { webView ->
+                            if (webView.url != tab.url) {
+                                webView.loadUrl(tab.url)
+                            }
                         }
-                    }
-
-                    loadUrl(currentUrl)
-                }
-            },
-            update = { webView ->
-                if (webView.url != currentUrl) {
-                    webView.loadUrl(currentUrl)
+                    )
                 }
             }
-        )
+        }
     }
 }
 
