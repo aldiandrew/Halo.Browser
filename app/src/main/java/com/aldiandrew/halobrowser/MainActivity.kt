@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     BrowserScreen(
                         initialUrl = extractUrl(intent) ?: "https://www.google.com",
-                        onOpenBubble = { showNativeBubble() }
+                        onOpenBubble = { url -> showNativeBubble(url) }
                     )
                 }
             }
@@ -116,10 +116,10 @@ class MainActivity : ComponentActivity() {
         shortcutManager.addDynamicShortcuts(listOf(shortcut))
     }
 
-    private fun showNativeBubble() {
-        val openIntent = Intent(this, MainActivity::class.java).apply {
+    private fun showNativeBubble(url: String) {
+        val openIntent = Intent(this, BubbleActivity::class.java).apply {
             action = Intent.ACTION_VIEW
-            putExtra(EXTRA_URL, "https://www.google.com")
+            putExtra(EXTRA_URL, url)
         }
 
         val pendingIntent = PendingIntent.getActivity(
@@ -150,6 +150,7 @@ class MainActivity : ComponentActivity() {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(false)
+            .setShortcutId(SHORTCUT_ID)
             .setBubbleMetadata(bubbleMetadata)
             .setContentIntent(pendingIntent)
             .build()
@@ -170,7 +171,7 @@ class MainActivity : ComponentActivity() {
 @androidx.compose.runtime.Composable
 private fun BrowserScreen(
     initialUrl: String,
-    onOpenBubble: () -> Unit
+    onOpenBubble: (String) -> Unit
 ) {
     var address by remember(initialUrl) { mutableStateOf(initialUrl) }
     var currentUrl by remember(initialUrl) { mutableStateOf(initialUrl) }
@@ -205,7 +206,7 @@ private fun BrowserScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         Button(
-            onClick = onOpenBubble,
+            onClick = { onOpenBubble(currentUrl) },
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Minimize to Android Bubble")
