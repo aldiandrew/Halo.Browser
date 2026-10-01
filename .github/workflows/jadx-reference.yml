@@ -46,20 +46,33 @@ jobs:
           rm -rf "$RUNNER_TEMP/decompiled" reference-analysis
           mkdir -p reference-analysis
 
-          "$JADX_BIN"             --deobf             --deobf-use-sourcename             --show-bad-code             --threads-count 2             -d "$RUNNER_TEMP/decompiled"             "$apk" > reference-analysis/jadx-console.txt 2>&1 || true
+          "$JADX_BIN" \
+            --deobf \
+            --deobf-use-sourcename \
+            --show-bad-code \
+            --threads-count 2 \
+            -d "$RUNNER_TEMP/decompiled" \
+            "$apk" > reference-analysis/jadx-console.txt 2>&1
+
+          source_dir="$(find "$RUNNER_TEMP/decompiled" -type d -name sources -print -quit)"
+          resource_dir="$(find "$RUNNER_TEMP/decompiled" -type d -name resources -print -quit)"
+          test -n "$source_dir"
+          test -n "$resource_dir"
 
           echo "=== APK FILE ===" > reference-analysis/apk-info.txt
           stat "$apk" >> reference-analysis/apk-info.txt
           sha256sum "$apk" >> reference-analysis/apk-info.txt
 
           echo "=== SOURCE FILE INDEX ===" > reference-analysis/source-index.txt
-          find "$RUNNER_TEMP/decompiled/sources" -type f \( -name '*.java' -o -name '*.kt' \) | sort >> reference-analysis/source-index.txt || true
+          find "$source_dir" -type f \( -name '*.java' -o -name '*.kt' \) | sort >> reference-analysis/source-index.txt
+          test -s reference-analysis/source-index.txt
 
           echo "=== TARGETED CLASS INDEX ===" > reference-analysis/targeted-class-index.txt
-          rg -l -i             'WindowManager|TYPE_APPLICATION_OVERLAY|SYSTEM_ALERT_WINDOW|AccessibilityService|MotionEvent|GestureDetector|VelocityTracker|snap|dock|edge|drag|close|resize|minimi|expand|bubble|floating|chat.?head|WebView|ForegroundService|startForeground|Notification|service'             "$RUNNER_TEMP/decompiled/sources"             | sort >> reference-analysis/targeted-class-index.txt || true
+          grep -RIl -E 'WindowManager|TYPE_APPLICATION_OVERLAY|SYSTEM_ALERT_WINDOW|AccessibilityService|MotionEvent|GestureDetector|VelocityTracker|snap|dock|edge|drag|close|resize|minimi|expand|bubble|floating|chat.?head|WebView|ForegroundService|startForeground|Notification|service' "$source_dir" | sort >> reference-analysis/targeted-class-index.txt || true
 
           echo "=== MANIFEST ===" > reference-analysis/AndroidManifest.xml.txt
-          cat "$RUNNER_TEMP/decompiled/resources/AndroidManifest.xml" >> reference-analysis/AndroidManifest.xml.txt || true
+          manifest="$(find "$resource_dir" -name AndroidManifest.xml -print -quit)"
+          if test -n "$manifest"; then cat "$manifest" >> reference-analysis/AndroidManifest.xml.txt; fi
 
           echo "=== TARGETED SOURCE CONTENT ===" > reference-analysis/targeted-source.txt
           while IFS= read -r file; do
@@ -71,10 +84,13 @@ jobs:
           done < reference-analysis/targeted-class-index.txt
 
           echo "=== RELEVANT RESOURCE STRINGS ===" > reference-analysis/relevant-resources.txt
-          rg -n -i             'bubble|floating|browser|chat.?head|minimi|expand|close|drag|move|resize|tab|new tab|settings|home|back|forward|refresh|download|incognito|desktop|mobile|share'             "$RUNNER_TEMP/decompiled/resources/values"             >> reference-analysis/relevant-resources.txt || true
+          values_dir="$(find "$resource_dir" -type d -name values -print -quit)"
+          if test -n "$values_dir"; then
+            grep -Rni -E 'bubble|floating|browser|chat.?head|minimi|expand|close|drag|move|resize|tab|new tab|settings|home|back|forward|refresh|download|incognito|desktop|mobile|share' "$values_dir" >> reference-analysis/relevant-resources.txt || true
+          fi
 
           echo "=== WINDOW / TOUCH / SERVICE SYMBOLS ===" > reference-analysis/symbol-hits.txt
-          rg -n -i             'WindowManager\\.LayoutParams|TYPE_APPLICATION_OVERLAY|TYPE_PHONE|TYPE_SYSTEM_ALERT|FLAG_NOT_FOCUSABLE|FLAG_NOT_TOUCH_MODAL|FLAG_LAYOUT_IN_SCREEN|FLAG_ALT_FOCUSABLE_IM|onTouchEvent|setOnTouchListener|ACTION_DOWN|ACTION_MOVE|ACTION_UP|ACTION_CANCEL|VelocityTracker|GestureDetector|OVERLAY|BUBBLE|FLOAT|SERVICE|NOTIFICATION'             "$RUNNER_TEMP/decompiled/sources"             >> reference-analysis/symbol-hits.txt || true
+          grep -Rni -E 'WindowManager\.LayoutParams|TYPE_APPLICATION_OVERLAY|TYPE_PHONE|TYPE_SYSTEM_ALERT|FLAG_NOT_FOCUSABLE|FLAG_NOT_TOUCH_MODAL|FLAG_LAYOUT_IN_SCREEN|FLAG_ALT_FOCUSABLE_IM|onTouchEvent|setOnTouchListener|ACTION_DOWN|ACTION_MOVE|ACTION_UP|ACTION_CANCEL|VelocityTracker|GestureDetector|OVERLAY|BUBBLE|FLOAT|SERVICE|NOTIFICATION' "$source_dir" >> reference-analysis/symbol-hits.txt || true
 
       - name: Commit analysis report
         shell: bash
