@@ -28,7 +28,10 @@ jobs:
           test -n "$url"
           curl -fL "$url" -o "$RUNNER_TEMP/jadx/jadx.zip"
           unzip -q "$RUNNER_TEMP/jadx/jadx.zip" -d "$RUNNER_TEMP/jadx"
-          test -x "$RUNNER_TEMP/jadx/jadx/bin/jadx"
+          JADX_BIN="$(find "$RUNNER_TEMP/jadx" -type f -path '*/bin/jadx' -print -quit)"
+          test -n "$JADX_BIN"
+          chmod +x "$JADX_BIN"
+          printf '%s\n' "$JADX_BIN" > "$RUNNER_TEMP/jadx/jadx-bin"
 
       - name: Decompile APK and extract behavior
         shell: bash
