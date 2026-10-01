@@ -16,7 +16,8 @@
             android:name=".BubbleActivity"
             android:allowEmbedded="true"
             android:resizeableActivity="true"
-            android:documentLaunchMode="always" />
+            android:theme="@style/Theme.HaloBrowser"
+            android:label="@string/app_name" />
 
         <activity
             android:name=".MainActivity"
