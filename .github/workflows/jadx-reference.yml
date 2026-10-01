@@ -69,9 +69,38 @@ jobs:
 
           echo "JADX_EXIT=$jadx_exit" >> reference-analysis/jadx-console.txt
 
+          mkdir -p reference-analysis/apk-parts "$RUNNER_TEMP/base-decompiled"
+
+          for part in "$RUNNER_TEMP/decompiled/resources/"*.apk; do
+            [ -f "$part" ] || continue
+            cp "$part" reference-analysis/apk-parts/
+          done
+
+          base_apk="$RUNNER_TEMP/decompiled/resources/base.apk"
+          if [ -f "$base_apk" ]; then
+            set +e
+            "$JADX_BIN" \
+              --deobf \
+              --use-source-name-as-class-name-alias always \
+              --show-bad-code \
+              --threads-count 2 \
+              -d "$RUNNER_TEMP/base-decompiled" \
+              "$base_apk" > reference-analysis/base-jadx-console.txt 2>&1
+            base_jadx_exit=$?
+            set -e
+            echo "BASE_JADX_EXIT=$base_jadx_exit" >> reference-analysis/base-jadx-console.txt
+
+            cp "$base_apk" reference-analysis/apk-parts/base.apk
+          else
+            echo "BASE_APK_NOT_FOUND" > reference-analysis/base-jadx-console.txt
+          fi
+
           echo "=== APK INFO ===" > reference-analysis/apk-info.txt
           stat "$apk" >> reference-analysis/apk-info.txt
           sha256sum "$apk" >> reference-analysis/apk-info.txt
+
+          echo "=== BASE APK DECOMPILED FILE TREE ===" > reference-analysis/base-decompiled-tree.txt
+          find "$RUNNER_TEMP/base-decompiled" -type f 2>/dev/null | sort >> reference-analysis/base-decompiled-tree.txt || true
 
           echo "=== DECOMPILED FILE TREE ===" > reference-analysis/decompiled-tree.txt
           find "$RUNNER_TEMP/decompiled" -type f 2>/dev/null | sort >> reference-analysis/decompiled-tree.txt || true
@@ -79,6 +108,29 @@ jobs:
           echo "=== SOURCE INDEX ===" > reference-analysis/source-index.txt
           find "$RUNNER_TEMP/decompiled" -type f -name '*.java' 2>/dev/null | sort >> reference-analysis/source-index.txt || true
           find "$RUNNER_TEMP/decompiled" -type f -name '*.kt' 2>/dev/null | sort >> reference-analysis/source-index.txt || true
+          find "$RUNNER_TEMP/base-decompiled" -type f -name '*.java' 2>/dev/null | sort >> reference-analysis/source-index.txt || true
+          find "$RUNNER_TEMP/base-decompiled" -type f -name '*.kt' 2>/dev/null | sort >> reference-analysis/source-index.txt || true
+
+          echo "=== BASE APK TARGETED CLASS INDEX ===" > reference-analysis/base-targeted-class-index.txt
+          base_target_index="$RUNNER_TEMP/base-targeted-source-index.txt"
+          : > "$base_target_index"
+          grep -R -l -i -E \
+            'WindowManager|TYPE_APPLICATION_OVERLAY|SYSTEM_ALERT_WINDOW|AccessibilityService|MotionEvent|GestureDetector|VelocityTracker|snap|dock|edge|drag|close|resize|minimi|expand|bubble|floating|chat.?head|WebView|ForegroundService|startForeground|Notification|service' \
+            "$RUNNER_TEMP/base-decompiled" 2>/dev/null \
+            | sort -u >> "$base_target_index" || true
+          cat "$base_target_index" >> reference-analysis/base-targeted-class-index.txt
+
+          echo "=== BASE APK TARGETED SOURCE CONTENT ===" > reference-analysis/base-targeted-source.txt
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            {
+              echo
+              echo "================================================================"
+              echo "FILE: $file"
+              echo "================================================================"
+              cat "$file"
+            } >> reference-analysis/base-targeted-source.txt
+          done < "$base_target_index"
 
           target_index="$RUNNER_TEMP/targeted-source-index.txt"
           : > "$target_index"
@@ -129,6 +181,8 @@ jobs:
 
           echo "=== JADX CONSOLE ==="
           cat reference-analysis/jadx-console.txt
+          echo "=== BASE JADX CONSOLE ==="
+          cat reference-analysis/base-jadx-console.txt
 
           echo "=== TARGETED SOURCE FILE COUNT ==="
           wc -l "$target_index" || true
