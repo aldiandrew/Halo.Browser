@@ -63,11 +63,11 @@ import androidx.core.view.WindowCompat
 
 class FloatingActivity : ComponentActivity() {
 
-    private var service: FloatingBubbleService? = null
+    private var service: ChatHeadService? = null
     private var bound = false
 
     private var currentId =
-        FloatingBubbleService.TAB_ID
+        ChatHeadService.TAB_ID
 
     private var currentUrl =
         DEFAULT_URL
@@ -81,7 +81,7 @@ class FloatingActivity : ComponentActivity() {
                 binder: IBinder?
             ) {
                 service =
-                    (binder as? FloatingBubbleService.LocalBinder)
+                    (binder as? ChatHeadService.LocalBinder)
                         ?.service()
 
                 bound = true
@@ -111,13 +111,13 @@ class FloatingActivity : ComponentActivity() {
 
         currentId =
             intent.getIntExtra(
-                FloatingBubbleService.EXTRA_BUBBLE_ID,
-                FloatingBubbleService.TAB_ID
+                ChatHeadService.EXTRA_BUBBLE_ID,
+                ChatHeadService.TAB_ID
             )
 
         currentUrl =
             intent.getStringExtra(
-                FloatingBubbleService.EXTRA_URL
+                ChatHeadService.EXTRA_URL
             ) ?: DEFAULT_URL
 
         bindFloatingService()
@@ -148,13 +148,13 @@ class FloatingActivity : ComponentActivity() {
 
         currentId =
             intent.getIntExtra(
-                FloatingBubbleService.EXTRA_BUBBLE_ID,
+                ChatHeadService.EXTRA_BUBBLE_ID,
                 currentId
             )
 
         currentUrl =
             intent.getStringExtra(
-                FloatingBubbleService.EXTRA_URL
+                ChatHeadService.EXTRA_URL
             ) ?: service?.urlFor(currentId)
             ?: DEFAULT_URL
 
@@ -180,7 +180,7 @@ class FloatingActivity : ComponentActivity() {
         val intent =
             Intent(
                 this,
-                FloatingBubbleService::class.java
+                ChatHeadService::class.java
             )
 
         bindService(
@@ -193,7 +193,7 @@ class FloatingActivity : ComponentActivity() {
     @androidx.compose.runtime.Composable
     private fun BrowserSurface() {
         val manager =
-            currentId == FloatingBubbleService.MANAGER_ID
+            currentId == ChatHeadService.MANAGER_ID
 
         Scaffold(
             containerColor =
