@@ -385,7 +385,7 @@ class ChatHeadService : Service() {
         SpringAnimation(p, px).apply {
             spring = SpringForce(targetX.toFloat()).apply {
                 stiffness = 700f
-                dampingRatio = 0.78f
+                dampingRatio = dampingRatio
             }
             setStartVelocity(vx)
         }.start()
@@ -393,7 +393,7 @@ class ChatHeadService : Service() {
         SpringAnimation(p, py).apply {
             spring = SpringForce(targetY.toFloat()).apply {
                 stiffness = 700f
-                dampingRatio = 0.78f
+                dampingRatio = dampingRatio
             }
             setStartVelocity(vy)
         }.start()
