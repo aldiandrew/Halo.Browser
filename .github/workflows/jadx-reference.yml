@@ -257,7 +257,7 @@ jobs:
               mkdir -p "$(dirname "$dest")"
               cp "$file" "$dest"
             done < <(
-              grep -RIl -E                 'ChatHeadService|BrowserManager|WindowManager|TYPE_APPLICATION_OVERLAY|MotionEvent|GestureDetector|VelocityTracker|Spring|spring|fling|drag|snap|dock|bubble|floating|overlay|WebView|Notification|startForeground'                 "$root" 2>/dev/null | sort -z
+              grep -RIlZ -E                 'ChatHeadService|BrowserManager|WindowManager|TYPE_APPLICATION_OVERLAY|MotionEvent|GestureDetector|VelocityTracker|Spring|spring|fling|drag|snap|dock|bubble|floating|overlay|WebView|Notification|startForeground'                 "$root" 2>/dev/null | sort -z
             )
           done
 
