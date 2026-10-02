@@ -106,7 +106,6 @@ class ChatHeadService : Service() {
         tabs[id] = head
         addHead(head)
         persist()
-        arrange()
         if (open) openBubble(id)
         return id
     }
@@ -121,7 +120,6 @@ class ChatHeadService : Service() {
         head.view?.visibility = View.INVISIBLE
         closeExpanded(false)
         openTabWindow(head)
-        arrange()
     }
 
     fun closeTab(id: String) {
@@ -129,7 +127,6 @@ class ChatHeadService : Service() {
         if (expandedId == id) closeExpanded(false)
         removeHead(head)
         persist()
-        arrange()
         updateManager()
         if (tabs.isEmpty()) addTab(DEFAULT_URL, false)
     }
@@ -294,33 +291,35 @@ class ChatHeadService : Service() {
         head.tab.x = targetX
         head.tab.y = targetY
         persist()
-        arrange()
     }
 
     private fun arrange() {
-        val list = tabs.values.filter { it !== dragging }
-        val left = list.filter { it.tab.x + bubbleSize() / 2 < screenWidth() / 2 }.sortedBy { it.tab.y }
-        val right = list.filter { it.tab.x + bubbleSize() / 2 >= screenWidth() / 2 }.sortedBy { it.tab.y }
-
-        arrangeSide(left, false)
-        arrangeSide(right, true)
-
-        managerHead?.let {
-            it.tab.x = screenWidth() - bubbleSize() - dp(8)
-            it.tab.y = dp(16)
-            updatePosition(it)
+        // The reference ChatHead manager does not continuously re-stack every
+        // bubble. Positions belong to each bubble and are changed only by
+        // creation, dragging and the final edge-snap animation.
+        tabs.values.forEach { head ->
+            val p = head.params ?: return@forEach
+            if (head === dragging) return@forEach
+            val maxX = max(0, screenWidth() - bubbleSize())
+            val maxY = max(dp(8), screenHeight() - bubbleSize() - dp(8))
+            val x = head.tab.x.coerceIn(0, maxX)
+            val y = head.tab.y.coerceIn(dp(8), maxY)
+            if (x != head.tab.x || y != head.tab.y) {
+                head.tab.x = x
+                head.tab.y = y
+                p.x = x
+                p.y = y
+                updatePosition(head)
+            }
         }
-    }
-
-    private fun arrangeSide(list: List<Head>, right: Boolean) {
-        list.forEachIndexed { index, head ->
-            val x = if (right) screenWidth() - bubbleSize() - dp(4) else dp(4)
-            val y = min(dp(84) + index * dp(62), screenHeight() - bubbleSize() - dp(8))
-            springTo(head, x, y, 0f, 0f)
-            head.tab.x = x
-            head.tab.y = y
+        managerHead?.let { head ->
+            if (head.tab.x !in 0..max(0, screenWidth() - bubbleSize()) ||
+                head.tab.y !in dp(8)..max(dp(8), screenHeight() - bubbleSize() - dp(8))) {
+                head.tab.x = screenWidth() - bubbleSize() - dp(8)
+                head.tab.y = dp(16)
+                updatePosition(head)
+            }
         }
-        if (list.isNotEmpty()) persist()
     }
 
     private fun springTo(head: Head, targetX: Int, targetY: Int, vx: Float, vy: Float) {
