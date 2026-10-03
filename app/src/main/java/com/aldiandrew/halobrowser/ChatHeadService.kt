@@ -60,6 +60,8 @@ class ChatHeadService : Service() {
 
     private var closeTarget: View? = null
     private var dragging: Head? = null
+    private var lastDragX = 0f
+    private var lastDragY = 0f
 
     inner class LocalBinder : android.os.Binder() {
         fun service(): ChatHeadService = this@ChatHeadService
@@ -98,6 +100,11 @@ class ChatHeadService : Service() {
     }
 
     fun addTab(url: String, open: Boolean): String {
+        if (tabs.size >= MAX_TABS) {
+            val existing = tabs.values.lastOrNull()
+            existing?.let { if (open) openBubble(it.tab.id) }
+            return existing?.tab?.id ?: ""
+        }
         val id = "browser_tab_" + System.currentTimeMillis() + "_" + (1000..9999).random()
         val tab = BrowserTab(id, normalizeUrl(url))
         tab.x = if (tabs.size % 2 == 0) dp(4) else screenWidth() - bubbleSize() - dp(4)
@@ -230,6 +237,8 @@ class ChatHeadService : Service() {
                     dragging = head
                     downX = event.rawX
                     downY = event.rawY
+                    lastDragX = event.rawX
+                    lastDragY = event.rawY
                     startX = p.x
                     startY = p.y
                     moved = false
@@ -242,6 +251,8 @@ class ChatHeadService : Service() {
                 }
                 MotionEvent.ACTION_MOVE -> {
                     tracker?.addMovement(event)
+                    lastDragX = event.rawX
+                    lastDragY = event.rawY
                     val dx = event.rawX - downX
                     val dy = event.rawY - downY
                     if (abs(dx) > dp(4) || abs(dy) > dp(4)) moved = true
@@ -263,7 +274,9 @@ class ChatHeadService : Service() {
                     hideCloseTarget()
                     springScale(view, 1f)
 
-                    if (isOverCloseTarget(event.rawX, event.rawY)) {
+                    val releaseX = if (event.rawX.isNaN()) lastDragX else event.rawX
+                    val releaseY = if (event.rawY.isNaN()) lastDragY else event.rawY
+                    if (isOverCloseTarget(releaseX, releaseY)) {
                         if (!head.manager) closeTab(head.tab.id)
                         dragging = null
                         return@OnTouchListener true
@@ -458,12 +471,12 @@ class ChatHeadService : Service() {
         }
 
         val p = overlayParams(
-            (screenWidth() * 0.92f).toInt().coerceAtLeast(dp(300)),
-            (screenHeight() * 0.72f).toInt().coerceAtLeast(dp(420)),
+            (screenWidth() * 0.86f).toInt().coerceAtLeast(dp(300)),
+            (screenHeight() * 0.64f).toInt().coerceAtLeast(dp(400)),
             true
         )
-        p.x = dp(8)
-        p.y = dp(50)
+        p.x = (screenWidth() - p.width) / 2
+        p.y = dp(72)
         wm.addView(root, p)
         expandedRoot = root
         expandedParams = p
@@ -513,8 +526,8 @@ class ChatHeadService : Service() {
         close.setOnClickListener { closeExpanded(false) }
 
         val p = overlayParams(
-            (screenWidth() * 0.9f).toInt().coerceAtLeast(dp(300)),
-            (screenHeight() * 0.72f).toInt().coerceAtLeast(dp(420)),
+            (screenWidth() * 0.84f).toInt().coerceAtLeast(dp(300)),
+            (screenHeight() * 0.60f).toInt().coerceAtLeast(dp(380)),
             true
         )
         p.x = dp(8)
@@ -721,9 +734,10 @@ class ChatHeadService : Service() {
             }
         }
         closeTarget = v
-        val p = overlayParams(dp(62), dp(62), false)
+        val p = overlayParams(dp(72), dp(72), false)
         p.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-        p.y = dp(40)
+        p.y = dp(24)
+        p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         wm.addView(v, p)
     }
 
@@ -761,14 +775,23 @@ class ChatHeadService : Service() {
         cornerRadius = radius.toFloat()
     }
 
-    private fun overlayParams(width: Int, height: Int, focusable: Boolean) =
-        WindowManager.LayoutParams(
+    private fun overlayParams(width: Int, height: Int, focusable: Boolean): WindowManager.LayoutParams {
+        val flags = if (focusable) {
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        } else {
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        }
+        return WindowManager.LayoutParams(
             width,
             height,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            if (focusable) WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL else WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            flags,
             android.graphics.PixelFormat.TRANSLUCENT
         )
+    }
 
     private fun bubbleSize() = dp(56)
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -840,5 +863,6 @@ class ChatHeadService : Service() {
         private const val DEFAULT_URL = "https://www.google.com"
         private const val NEW_TAB_URL = "about:blank"
         private const val CHANNEL_ID = "halo_floating_service"
+        private const val MAX_TABS = 4
     }
 }
