@@ -408,20 +408,23 @@ class ChatHeadService : Service() {
         }.start()
     }
 
-    private fun openTabWindow(head: Head) {
+    private fun expandTab(head: Head) {
         closeExpanded(false)
-        expandedId = head.tab.id
+        val root = head.view as? FrameLayout ?: return
         activeId = head.tab.id
+        expandedId = head.tab.id
+        head.expanded = true
+        root.setOnTouchListener(null)
+        root.removeAllViews()
+        root.background = rounded(0xFFFDFBFF.toInt(), dp(28))
 
-        val root = browserContainer()
-        val column = LinearLayout(this)
-        column.orientation = LinearLayout.VERTICAL
-        column.setPadding(dp(8), dp(6), dp(8), dp(8))
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(6), dp(8), dp(8))
+        }
         root.addView(column, FrameLayout.LayoutParams(-1, -1))
 
-        val bar = LinearLayout(this)
-        bar.gravity = Gravity.CENTER_VERTICAL
-
+        val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         title = TextView(this).apply {
             text = head.tab.title.ifBlank { "Halo Browser" }
             textSize = 15f
@@ -451,11 +454,9 @@ class ChatHeadService : Service() {
         column.addView(address, LinearLayout.LayoutParams(-1, dp(48)).apply { bottomMargin = dp(6) })
 
         val web = webView(head)
-        expandedWeb = web
         column.addView(web, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        val footer = LinearLayout(this)
-        footer.gravity = Gravity.CENTER_VERTICAL
+        val footer = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         val manager = button("☷")
         val incognito = button(if (head.tab.incognito) "●" else "○")
         val desktop = button(if (head.tab.desktopSite) "D" else "d")
@@ -474,7 +475,7 @@ class ChatHeadService : Service() {
         incognito.setOnClickListener {
             head.tab.incognito = !head.tab.incognito
             persist()
-            openTabWindow(head)
+            expandTab(head)
         }
         desktop.setOnClickListener {
             head.tab.desktopSite = !head.tab.desktopSite
@@ -492,31 +493,39 @@ class ChatHeadService : Service() {
             true
         }
 
-        val p = overlayParams(
-            (screenWidth() * 0.86f).toInt().coerceAtLeast(dp(300)),
-            (screenHeight() * 0.64f).toInt().coerceAtLeast(dp(400)),
-            true
-        )
+        val p = head.params ?: overlayParams(expandedWidth(), expandedHeight(), true)
+        p.width = expandedWidth()
+        p.height = expandedHeight()
         p.x = (screenWidth() - p.width) / 2
-        p.y = dp(72)
-        wm.addView(root, p)
+        p.y = expandedTop()
+        p.flags = expandedFlags()
+        head.params = p
         expandedRoot = root
         expandedParams = p
+        try { wm.updateViewLayout(root, p) } catch (_: Exception) {}
 
-        if (head.tab.url == NEW_TAB_URL) showNewTab(web) else if (web.url != head.tab.url) web.loadUrl(head.tab.url)
+        if (head.tab.url == NEW_TAB_URL) showNewTab(web)
+        else if (web.url != head.tab.url) web.loadUrl(head.tab.url)
     }
 
     private fun openManager() {
         closeExpanded(false)
+        val head = managerHead ?: return
+        val root = head.view as? FrameLayout ?: return
+        activeId = MANAGER_ID
         expandedId = MANAGER_ID
-        val root = browserContainer()
-        val column = LinearLayout(this)
-        column.orientation = LinearLayout.VERTICAL
-        column.setPadding(dp(14), dp(12), dp(14), dp(12))
+        head.expanded = true
+        root.setOnTouchListener(null)
+        root.removeAllViews()
+        root.background = rounded(0xFFFDFBFF.toInt(), dp(28))
+
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
         root.addView(column, FrameLayout.LayoutParams(-1, -1))
 
-        val bar = LinearLayout(this)
-        bar.gravity = Gravity.CENTER_VERTICAL
+        val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         val header = TextView(this).apply {
             text = "Browser Manager"
             textSize = 22f
@@ -530,7 +539,7 @@ class ChatHeadService : Service() {
         column.addView(bar)
 
         val sub = TextView(this).apply {
-            text = "Active tabs"
+            text = "Active tabs • ${tabs.size}/$MAX_TABS"
             textSize = 14f
             setTextColor(0xFF706A74.toInt())
         }
@@ -544,19 +553,22 @@ class ChatHeadService : Service() {
         scroll.addView(managerList)
         column.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        add.setOnClickListener { addTab(DEFAULT_URL, true) }
-        close.setOnClickListener { closeExpanded(false) }
+        add.setOnClickListener {
+            addTab(DEFAULT_URL, false)
+            updateManager()
+        }
+        close.setOnClickListener { minimize() }
 
-        val p = overlayParams(
-            (screenWidth() * 0.84f).toInt().coerceAtLeast(dp(300)),
-            (screenHeight() * 0.60f).toInt().coerceAtLeast(dp(380)),
-            true
-        )
-        p.x = dp(8)
-        p.y = dp(50)
-        wm.addView(root, p)
+        val p = head.params ?: overlayParams(expandedWidth(), expandedHeight(), true)
+        p.width = expandedWidth()
+        p.height = expandedHeight()
+        p.x = (screenWidth() - p.width) / 2
+        p.y = expandedTop()
+        p.flags = expandedFlags()
+        head.params = p
         expandedRoot = root
         expandedParams = p
+        try { wm.updateViewLayout(root, p) } catch (_: Exception) {}
         updateManager()
     }
 
@@ -705,21 +717,18 @@ class ChatHeadService : Service() {
     }
 
     private fun closeExpanded(restore: Boolean) {
-        val root = expandedRoot ?: return
-        try { wm.removeView(root) } catch (_: Exception) {}
+        val id = expandedId ?: return
+        val head = if (id == MANAGER_ID) managerHead else tabs[id]
+        if (head != null) {
+            collapseHead(head)
+            if (restore) head.view?.visibility = View.VISIBLE
+        }
         expandedRoot = null
         expandedParams = null
-        expandedWeb = null
+        expandedId = null
         address = null
         title = null
         managerList = null
-
-        if (restore) {
-            val id = expandedId
-            if (id == MANAGER_ID) managerHead?.view?.visibility = View.VISIBLE
-            else if (id != null) tabs[id]?.view?.visibility = View.VISIBLE
-        }
-        expandedId = null
     }
 
     private fun removeHead(head: Head) {
