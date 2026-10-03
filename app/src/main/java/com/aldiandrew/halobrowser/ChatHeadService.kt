@@ -150,7 +150,7 @@ class ChatHeadService : Service() {
     }
 
     fun maximize() {
-        activeId?.let { tabs[it]?.let { openTabWindow(it) } }
+        activeId?.let { tabs[it]?.let { expandTab(it) } }
     }
 
     fun bubbleSnapshot(): List<BubbleInfo> {
@@ -653,7 +653,7 @@ class ChatHeadService : Service() {
         val target = normalizeUrl(value)
         head.tab.url = target
         persist()
-        expandedWeb?.loadUrl(target)
+        head.web?.loadUrl(target)
     }
 
     private fun browserContainer(): FrameLayout {
