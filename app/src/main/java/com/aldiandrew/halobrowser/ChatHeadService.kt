@@ -81,7 +81,7 @@ class ChatHeadService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_ADD_BUBBLE) {
-            addTab(intent.getStringExtra(EXTRA_URL) ?: DEFAULT_URL, true)
+            addTab(intent.getStringExtra(EXTRA_URL) ?: DEFAULT_URL, false)
         }
         if (intent?.action == ACTION_OPEN_BUBBLE) {
             intent.getStringExtra(EXTRA_BUBBLE_ID)?.let { openBubble(it) }
@@ -102,13 +102,14 @@ class ChatHeadService : Service() {
     fun addTab(url: String, open: Boolean): String {
         if (tabs.size >= MAX_TABS) {
             val existing = tabs.values.lastOrNull()
-            existing?.let { if (open) openBubble(it.tab.id) }
+            if (open && existing != null) openBubble(existing.tab.id)
             return existing?.tab?.id ?: ""
         }
-        val id = "browser_tab_" + System.currentTimeMillis() + "_" + (1000..9999).random()
+        val id = "browser_tab_" + System.currentTimeMillis()
         val tab = BrowserTab(id, normalizeUrl(url))
-        tab.x = if (tabs.size % 2 == 0) dp(4) else screenWidth() - bubbleSize() - dp(4)
-        tab.y = dp(90) + tabs.size * dp(62)
+        val index = tabs.size
+        tab.x = if (index % 2 == 0) dp(6) else screenWidth() - bubbleSize() - dp(6)
+        tab.y = (dp(110) + (index / 2) * dp(82)).coerceAtMost(screenHeight() - bubbleSize() - dp(80))
         val head = Head(tab)
         tabs[id] = head
         addHead(head)
@@ -124,14 +125,13 @@ class ChatHeadService : Service() {
         }
         val head = tabs[id] ?: return
         activeId = id
-        head.view?.visibility = View.INVISIBLE
-        closeExpanded(false)
-        openTabWindow(head)
+        expandTab(head)
     }
 
     fun closeTab(id: String) {
-        val head = tabs.remove(id) ?: return
+        val head = tabs[id] ?: return
         if (expandedId == id) closeExpanded(false)
+        tabs.remove(id)
         removeHead(head)
         persist()
         updateManager()
@@ -160,15 +160,37 @@ class ChatHeadService : Service() {
     }
 
     private fun restore() {
-        data.loadActiveTabs().forEach {
-            if (it.id.isNotBlank()) {
-                val head = Head(it)
-                tabs[it.id] = head
-                addHead(head)
+        val restored = data.loadActiveTabs().asSequence()
+            .filter { it.id.isNotBlank() && it.id != MANAGER_ID }
+            .take(MAX_TABS).toList()
+        restored.forEach {
+            val head = Head(it)
+            tabs[it.id] = head
+            addHead(head)
+        }
+        if (tabs.isEmpty()) {
+            addTab(DEFAULT_URL, false)
+            return
+        }
+        val allRight = tabs.values.all { it.tab.x > screenWidth() / 2 }
+        val allLeft = tabs.values.all { it.tab.x < screenWidth() / 2 }
+        val overlap = tabs.values.toList().let { list ->
+            list.indices.any { i ->
+                list.indices.drop(i + 1).any { j ->
+                    abs(list[i].tab.x - list[j].tab.x) < dp(48) &&
+                        abs(list[i].tab.y - list[j].tab.y) < dp(48)
+                }
             }
         }
-        if (tabs.isEmpty()) addTab(DEFAULT_URL, false)
-        arrange()
+        if (allRight || allLeft || overlap) {
+            tabs.values.forEachIndexed { index, head ->
+                head.tab.x = if (index % 2 == 0) dp(6) else screenWidth() - bubbleSize() - dp(6)
+                head.tab.y = (dp(110) + (index / 2) * dp(82))
+                    .coerceAtMost(screenHeight() - bubbleSize() - dp(80))
+                updatePosition(head)
+            }
+        }
+        persist()
     }
 
     private fun persist() {
