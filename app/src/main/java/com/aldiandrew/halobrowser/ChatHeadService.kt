@@ -251,6 +251,7 @@ class ChatHeadService : Service() {
         var startY = 0
         var moved = false
         var tracker: VelocityTracker? = null
+        var closeArmed = false
 
         return View.OnTouchListener { view, event ->
             val p = head.params ?: return@OnTouchListener false
@@ -264,6 +265,7 @@ class ChatHeadService : Service() {
                     startX = p.x
                     startY = p.y
                     moved = false
+                    closeArmed = false
                     tracker?.recycle()
                     tracker = VelocityTracker.obtain()
                     tracker?.addMovement(event)
@@ -284,6 +286,8 @@ class ChatHeadService : Service() {
                     wm.updateViewLayout(view, p)
                     head.tab.x = p.x
                     head.tab.y = p.y
+                    closeArmed = isBubbleOverCloseTarget(head)
+                    setCloseTargetArmed(closeArmed)
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -293,13 +297,12 @@ class ChatHeadService : Service() {
                     val vy = tracker?.yVelocity ?: 0f
                     tracker?.recycle()
                     tracker = null
+                    val shouldClose = closeArmed || isBubbleOverCloseTarget(head)
                     hideCloseTarget()
                     springScale(view, 1f)
 
-                    val releaseX = if (event.rawX.isNaN()) lastDragX else event.rawX
-                    val releaseY = if (event.rawY.isNaN()) lastDragY else event.rawY
-                    if (isOverCloseTarget(releaseX, releaseY)) {
-                        if (!head.manager) closeTab(head.tab.id)
+                    if (shouldClose && !head.manager) {
+                        closeTab(head.tab.id)
                         dragging = null
                         return@OnTouchListener true
                     }
