@@ -736,6 +736,7 @@ class ChatHeadService : Service() {
         head.web?.destroy()
         head.view = null
         head.web = null
+        head.icon = null
     }
 
     private fun updatePosition(head: Head) {
@@ -746,6 +747,69 @@ class ChatHeadService : Service() {
         }
     }
 
+    private fun collapseHead(head: Head) {
+        val root = head.view as? FrameLayout ?: return
+        head.expanded = false
+        root.removeAllViews()
+        root.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(
+                if (head.manager) 0xFF6750A4.toInt()
+                else if (head.tab.incognito) 0xFF29272D.toInt()
+                else 0xFFF5F1F8.toInt()
+            )
+            setStroke(dp(1), 0x33000000)
+        }
+        root.elevation = dp(8).toFloat()
+        head.icon?.let { icon ->
+            icon.setImageResource(R.drawable.ic_halo_browser)
+            icon.setPadding(dp(8), dp(8), dp(8), dp(8))
+            head.tab.favicon?.let {
+                try {
+                    val bytes = Base64.getDecoder().decode(it)
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let(icon::setImageBitmap)
+                } catch (_: Exception) {}
+            }
+            root.addView(icon, FrameLayout.LayoutParams(-1, -1))
+        }
+        root.setOnTouchListener(touch(head))
+        val p = head.params ?: overlayParams(bubbleSize(), bubbleSize(), false)
+        p.width = bubbleSize()
+        p.height = bubbleSize()
+        p.x = head.tab.x.coerceIn(0, max(0, screenWidth() - bubbleSize()))
+        p.y = head.tab.y.coerceIn(dp(8), max(dp(8), screenHeight() - bubbleSize() - dp(8)))
+        p.flags = bubbleFlags()
+        head.params = p
+        try { wm.updateViewLayout(root, p) } catch (_: Exception) {}
+    }
+
+    private fun bubbleFlags(): Int =
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+
+    private fun expandedFlags(): Int =
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+
+    private fun expandedWidth(): Int =
+        (screenWidth() * 0.82f).toInt().coerceAtLeast(dp(300))
+
+    private fun expandedHeight(): Int =
+        (screenHeight() * 0.58f).toInt().coerceAtLeast(dp(380))
+
+    private fun expandedTop(): Int = dp(72)
+
+    private fun nextBubblePosition(): Pair<Int, Int> {
+        val index = tabs.size
+        val sideLeft = index % 2 == 0
+        val row = index / 2
+        val y = (dp(110) + row * dp(82))
+            .coerceAtMost(screenHeight() - bubbleSize() - dp(80))
+        val x = if (sideLeft) dp(6) else screenWidth() - bubbleSize() - dp(6)
+        return x to y
+    }
+
     private fun clamp(p: WindowManager.LayoutParams) {
         p.x = p.x.coerceIn(0, max(0, screenWidth() - bubbleSize()))
         p.y = p.y.coerceIn(dp(8), max(dp(8), screenHeight() - bubbleSize() - dp(8)))
@@ -754,7 +818,7 @@ class ChatHeadService : Service() {
     private fun showCloseTarget() {
         if (closeTarget != null) return
         val v = TextView(this).apply {
-            text = "×"
+            text = "↓"
             textSize = 28f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
@@ -765,28 +829,37 @@ class ChatHeadService : Service() {
             }
         }
         closeTarget = v
-        val p = overlayParams(dp(72), dp(72), false)
+        val p = overlayParams(dp(76), dp(76), false)
         p.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-        p.y = dp(24)
+        p.y = dp(18)
         p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         wm.addView(v, p)
+    }
+
+    private fun setCloseTargetArmed(armed: Boolean) {
+        val v = closeTarget as? TextView ?: return
+        v.text = if (armed) "×" else "↓"
+        v.textSize = if (armed) 34f else 28f
+        v.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (armed) 0xFFB3261E.toInt() else 0xFF2B2930.toInt())
+            setStroke(dp(if (armed) 3 else 2), Color.WHITE)
+        }
+    }
+
+    private fun isBubbleOverCloseTarget(head: Head): Boolean {
+        val p = head.params ?: return false
+        val left = (screenWidth() - dp(76)) / 2
+        val top = screenHeight() - dp(18) - dp(76)
+        val right = left + dp(76)
+        val bottom = top + dp(76)
+        return p.x < right && p.x + bubbleSize() > left &&
+            p.y < bottom && p.y + bubbleSize() > top
     }
 
     private fun hideCloseTarget() {
         closeTarget?.let { try { wm.removeView(it) } catch (_: Exception) {} }
         closeTarget = null
-    }
-
-    private fun isOverCloseTarget(x: Float, y: Float): Boolean {
-        val target = closeTarget ?: return false
-        val pos = IntArray(2)
-        target.getLocationOnScreen(pos)
-        val cx = pos[0] + target.width / 2f
-        val cy = pos[1] + target.height / 2f
-        val r = target.width / 2f + dp(18)
-        val dx = x - cx
-        val dy = y - cy
-        return dx * dx + dy * dy <= r * r
     }
 
     private fun button(text: String): TextView {
@@ -807,19 +880,11 @@ class ChatHeadService : Service() {
     }
 
     private fun overlayParams(width: Int, height: Int, focusable: Boolean): WindowManager.LayoutParams {
-        val flags = if (focusable) {
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-        } else {
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-        }
         return WindowManager.LayoutParams(
             width,
             height,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            flags,
+            if (focusable) expandedFlags() else bubbleFlags(),
             android.graphics.PixelFormat.TRANSLUCENT
         )
     }
@@ -873,7 +938,8 @@ class ChatHeadService : Service() {
         var view: View? = null,
         var params: WindowManager.LayoutParams? = null,
         var web: WebView? = null,
-        var icon: ImageView? = null
+        var icon: ImageView? = null,
+        var expanded: Boolean = false
     )
 
     data class BubbleInfo(
